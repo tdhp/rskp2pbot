@@ -1,19 +1,17 @@
-![p2pRSKBot](logo-600.png)
-
 [![MIT license](https://img.shields.io/badge/license-MIT-brightgreen)](./LICENSE)
-# P2PRSKBot
-Telegram bot (name: @rskp2pbot_testnet, handle @rskp2pbot_testnet_bot) that allows people to trade using lightning network with other people on telegram, this is an open source project and anyone can create issues, submit a PR, fork it, modify it or create their own bot with the code.
+# P2PRSKBot [demo video](https://we.tl/t-zd4DYvH5Zv)
+Telegram bot [bot](https://t.me/rskp2pbot_testnet) that allows people to trade using lightning network with other people on telegram, this is an open source project and anyone can create issues, submit a PR, fork it, modify it or create their own bot with the code.
 
 ## Try it out!
 * Website: **TODO**
 * Bot: **TODO**
 * Main channel offers: **TODO**
 
-Wherever you are you can start using the [bot](https://t.me/lnp2pbot), just need to have a telegram account with a username and `/start` the bot.
+Wherever you are you can start using the [bot](https://t.me/rskp2pbot_testnet), just need to have a telegram account with a username and `/start` the bot.
 
 ---
 
-**p2plnbot** is being developed on nodejs and connects with an RSK ecosystem.
+**rskp2pbot** is being developed on nodejs and connects with an RSK ecosystem.
 Escrow accounts are used to receive the RBTC from the seller and are thereafter used to transfer the RBTC to the buyer once the confirmation is given by both parties.
 
 ## Creating a sell order

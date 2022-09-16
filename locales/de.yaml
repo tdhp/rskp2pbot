@@ -30,7 +30,7 @@ start: |
   Mache eine schnelle und sichere Transaktion!
 init_bot_error: Um diesen Bot zu verwenden, musst du zuerst den Boot mit dem Befehl /start initialisieren
 non_handle_error: 👤 Um diesen Bot zu nutzen, musst du deinen Telegram-Benutzernamen aktivieren. Um ihn zu aktivieren, öffne das Hamburger-Menü oben links und wähle Einstellungen -> Profil bearbeiten -> Benutzernamen
-invoice_payment_request: |
+fund_deposit_request: |
   Jemand möchte ${order.amount} Sats für ${currency} ${order.fiat_amount} kaufen.
 
   Buyer Reputation: ${rate}
@@ -83,14 +83,12 @@ buy_correct_format: |
 
   `/buy 0 100\-500 EUR "Banküberweisung" \-2`
 min_invoice_amount: LN-Rechnung muss gleich oder höher als ${minPaymentAmount} sats sein
-min_expiration_time: Die Ablaufzeit für die LN-Rechnung muss mindestens ${expirationTime} Minuten betragen
 invoice_expired: Die LN-Rechnung ist abgelaufen
 invoice_expired_long: |
   Die LN-Rechnung ist abgelaufen. Du kannst mir mit folgendem Befehl eine neue LN-Rechnung schicken, um die sats zu erhalten 👇
 setinvoice_cmd_order: |
   /setinvoice ${orderId} \\<Lightning Invoice\\>
 invoice_require_destination: Die LN-Rechnung braucht eine Empfängeradresse
-invoice_require_hash: LN-Rechnung braucht einen Hash
 order_id_invalid: Ungültige Auftrags-ID
 order_invalid_type: Der ${type} Auftrag ist ungültig
 order_already_taken: Dieser Auftrag wurde bereits von einem anderen Nutzer übernommen.
@@ -141,8 +139,8 @@ rate_counterpart: 'Bitte bewerte deine Gegenpartei:'
 cant_process_order: Dieser Auftrag kann nicht bearbeitet werden. Bitte überprüfe, ob die ID korrekt ist.
 cant_release_order: Dieser Auftrag kann nicht freigegeben werden, der Käufer hat keine LN-Rechnung geschickt.
 no_id_related: Du hast keinen Auftrag, der mit dieser Id verbunden ist.
-sell_sats: Verkaufe Sats
-buy_sats: Kaufe Sats
+sell_label: Verkaufe Sats
+buy_label: Kaufe Sats
 order_detail: |
   Id: `${order._id}`
 
@@ -158,7 +156,7 @@ order_detail: |
 
   Bot Gebühren \\(sats\\): ${fee}
 
-  Routing Gebühren \\(sats\\): ${order.routing_fee}
+  Gebühr \\(sats\\): ${order.gas_fee}
 
   FIAT Wert \\(fiat\\) ${order.fiat_code}: ${order.fiat_amount}
 
@@ -170,11 +168,9 @@ order_detail: |
 
   Ausgeführt am: ${takenAt || ''}
 
-  Rechung Hash Verkäufer: `${order.hash || ''}`
+  Treuhandkonto-Adresse: `${order.escrow_account.address || ''}`
 
-  LN-Rechnung Secret Verkäufer: `${order.secret || ''}`
-
-  Zahlungsaufforderung Käufer: `${order.buyer_invoice || ''}`
+  Zahlungsaufforderung Käufer: `${order.buyer_address || ''}`
 seller: Käufer
 buyer: Verkäufer
 dispute_started_channel: |
@@ -191,8 +187,8 @@ you_started_dispute_to_seller: 🥴 Du hast einen Streitfall für deinen Verkauf
 seller_started_dispute_to_buyer: '🥴 Der Verkäufer hat einen Streitfall für deinen Auftrag mit der Id: ${orderId} eröffnet, wir werden uns mit dir und deinem Vertragspartner in Verbindung setzen, um die Angelegenheit zu klären.'
 must_be_valid_currency: 'Fiat_code muss ein gültiger Code sein, zum Beispiel: USD, EUR, eine vollständige Liste kannst du unter /listcurrencies sehen.'
 must_be_number_or_range: 'Fiat_amount muss eine Zahl oder ein numerischer Bereich im Format <minimum>-<maximum> sein'
-invalid_lightning_address: Ungültige Lightning-Adresse
-unavailable_lightning_address: Nicht verfügbare Lightning-Adresse ${la}
+invalid_address: Ungültige Lightning-Adresse
+unavailable_address: Nicht verfügbare Lightning-Adresse ${la}
 help: |
   /sell <_Anzahl sats_> <_fiat Wert_> <_fiat code_> <_Zahlungsmethode_> \[_Zuschlag/Rabatt_] - Erstellt einen Bitcoin Verkaufsauftrag
   /buy <_Anzahl sats_> <_fiat Wert_> <_fiat code_> <_Zahlungsmethode_> \[_Zuschlag/Rabatt_] - Erstellt eine Bitcoin Kaufauftrag
@@ -232,7 +228,7 @@ user_not_found: Benutzer wurde in der Datenbank nicht gefunden!
 parse_invoice_error: Fehler beim Parsen der LN-Rechnung
 invalid_id: Ungültige Id
 cant_take_own_order: Du kannst deinen eigenen Auftrag nicht annehmen.
-send_me_lninvoice: Bitte sende mir ein Lightning-Network LN-Rechnung für ${amount} sats
+send_me_payout_address: Bitte sende mir ein Lightning-Network LN-Rechnung für ${amount} sats
 you_have_no_orders: Du hast keine aktiven Aufträge
 not_rate_for_currency: |
   ${fiatRateProvider} Es gibt keinen Wechselkurs für diese FIAT-Währung,
@@ -240,7 +236,7 @@ not_rate_for_currency: |
   Wenn du diese FIAT-Währung in der Liste haben möchtest, kannst du die Funktion /listcurrencies verwenden, um eine Anfrage zu stellen. 👇****
 
   🌐 https://yadio.io/api.html
-invoice_with_incorrect_amount: Der in der LN-Rechnung angegebene Betrag falsch ist
+incorrect_amount_deposited_in_escrow: 'The amount sent to the escrow account was incorrect. Returning ${depositedAmount} Weis minus gas fees to address ${sellerAddress}. Try to make another deposit with the right amount this time.'
 invoice_updated: 📝 Die LN-Rechnung wurde korrekt aktualisiert!
 invoice_updated_and_will_be_paid: Die LN-Rechnungen wurden aktualisiert und werden in den nächsten Sekunden bezahlt!
 invoice_already_being_paid: Du hast bereits eine LN-Rechnung für diesen Auftrag geschickt und ich versuche, sie gerade jetzt zu bezahlen.
@@ -349,9 +345,11 @@ pending_payment_success_to_admin: |
 
   Zahlungsnachweis: ${paymentSecret}
 pending_payment_success: |
-  Ich habe die LN-Rechnung über ${amount} Sats für den Auftrag ${id} bezahlt!
+  Ich habe die ${amount} Sats für den Auftrag ${id} bezahlt!
 
   Zahlungsnachweis: ${paymentSecret}
+not_enough_fund_for_payment_of_earnings: |
+  I have not enough funds to pay yours earning of ${earning} right now. I will retry later.
 pending_payment_failed: |
   🤖 Ich habe ${attempts} Mal versucht, deine LN-Rechnung zu bezahlen und bin gescheitert. Manchmal können Nutzer des Lightning-Netzwerks keine Zahlungen erhalten, weil ihre Wallet nicht genügend Guthaben auf ihrem Node hat. Du solltest versuchen, eine LN-Rechnung von einer anderen Wallet mit genügend Guthaben zu erstellen.
 
@@ -374,12 +372,13 @@ price: Preis
 for: Für
 generic_error: Ein Fehler ist aufgetreten
 sats: sats
+rif: RIFs
 no_capital_letters: 🤖 Du versuchst, einen Befehl auszuführen, bei dem der erste Buchstabe groß geschrieben wird. Bitte schreibe den gesamten Befehl in Kleinbuchstaben.
 unknown_command: 😕 Ich verstehe das nicht. Bitte benutze /help, um die Liste der verfügbaren Befehle zu sehen
 invoice_invalid_error: |
-  Fehler beim Parsen der LN-Rechnung. Bitte füge eine Lightning-Netzwerk LN-Rechnung ein, die mit "lnbc" beginnt.
+  Error parsing the invoice. Please copy-paste a valid RSK address starting with '0x'.
 
-  Wenn du abbrechen und in den Befehlseingabemodus zurückkehren willst, tippe einfach /exit
+  If you want to abort and return to the command entering mode just run /exit
 invoice_expiry_too_short_error: LN-Rechnungsablauf ist zu kurz
 invoice_has_expired_error: Die LN-Rechnung ist abgelaufen
 invoice_has_wrong_destination_error: Die LN-Rechnung hat ein falsches Ziel
@@ -405,12 +404,14 @@ take_dispute: Streitfall übernehmen
 not_authorized: 🤨 Du bist nicht berechtigt diese Aktion durchzuführen
 need_default_community: Um diese Aktion durchzufüren, musst du eine Standart-Community gesetzt haben
 enter_sats_amount: Sats-Betrag eingeben, Geben Sie nur Zahlen ein.
+enter_rif_amount: Enter RIF amount, enter only numbers.
 market_price: Marktpreis
 enter_currency: 'Gib eine Währung anhand des Codes ein, z.B.: USD'
 choose_currency: Wähle eine Währung
 enter_currency_amount: Gib den Betrag in ${currency} ein, enter only numbers.
 no_premium_or_discount: No premium or discount
 enter_premium_discount: Enter the premium(+) or discount(-) to apply to the market price.
+select_asset: Pick the asset token you would like to trade for.
 enter_payment_method: Gib die Zahlungsmethode ein (z.B. Banküberweisung)
 invalid_currency: Ungültige Währung
 not_number: Es muss eine Zahl sein
@@ -431,7 +432,7 @@ max_allowed: Das maximal erlaubte ist ${max}
 dispute_channel: Streitkanal
 not_wizard: Sie sind momentan nicht im Assistentenmodus. Für Hilfe verwenden Sie /help
 wizard_help: Sie befinden sich im Assistentenmodus, wenn Sie wieder zum Befehlsmodus wollen, verwenden Sie /exit
-hold_invoice_memo: '@${botName} - Auftrag #${orderId}: BTC verkaufen für ${fiatCode} ${fiatAmount} - Der Betrag wird im gehalten, bis Sie diesen mit /release freigeben. Wenn der Käufer nicht bestätigt, wird der Betrag zurückbezahlt.'
+deposit_funds_in_escrow_memo: '@${botName} - Auftrag #${orderId}: BTC verkaufen für ${fiatCode} ${fiatAmount} - Der Betrag wird im gehalten, bis Sie diesen mit /release freigeben. Wenn der Käufer nicht bestätigt, wird der Betrag zurückbezahlt.'
 tap_button: Wählen Sie eine Bestellung, um den Vorgang auszuführen
 tap_release: Wählen Sie die Reihenfolge aus, um die Mittel freizugeben. Sobald Sie die Schaltfläche berühren, kann der Vorgang nicht rückgängig gemacht werden.
 earnings: Verdienste

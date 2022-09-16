@@ -1,0 +1,46 @@
+- ~~Pending Payment for communities function is not defined~~
+- ~~wait for enough confirmation~~
+- ~~Compute gas fees dynamically~~
+- ~~Rename order properties,~~ 
+  - ~~`hash -> escrow_account_address`~~
+  - ~~`routing_fee -> gas_fee`~~
+- ~~Remove lightning related variable and file naming `lnInvoice, holdInvoice, secret, ....`~~ 
+- ~~Improve the algorithm for searching the deposit transaction~~
+  - ~~findTransaction works for accounts with only 1 transaction~~ (escrow accounts)
+  - ~~Add the id of the order or of the community as data `data: rsk3.utils.toHex('A random test data')`~~
+- Update tests
+- Inform users while cancellation is in progress since it could take some time to loop through block history
+~~- Remove hardcoded values:~~
+  ~~- HttpProvider~~
+  ~~- Chain id~~
+- ~~Restore limit of one ongoing order per user~~
+  - ~~Cannot take sell order while order is waiting for me~~
+- ~~Replace lightning addresses of buyer by RBTC wallet~~
+- ~~Compute max depth of search for deposit transaction based on the expiration time of the payment window and of the block time of the network~~
+- ~~Fees extraction from escrow accounts~~
+- ~~Community creation and fees~~
+  - ~~Hold invoice created include order amount + total fees (bot + community)~~
+  - ~~On cancel, the whole balance is refunded~~
+- ~~Escrow accounts management~~
+  - ~~Create escrow account in order receive the funds from the seller IF no other escrow account is `available`~~.
+  - ~~Escrow account stops becoming available when it was picked to hold the funds of an order. It remains busy until the order is settled or canceled.~~
+  - ~~Escrow accounts are loaded in the in-memory wallet at startup~~
+  - ~~Escrow account model has the following properties:~~
+    - ~~`_id`~~
+    - ~~`address`~~
+    - ~~`secret`~~
+    - ~~`status`~~
+      - ~~`AVAILABLE`~~
+      - ~~`BUSY`~~
+    - ~~`balance`~~
+    - ~~`last_deposit_block_number`~~
+    - ~~`last_deposit_amount`~~
+- Change units from sats to weis in messages
+- Send error message when user tries to take a buy/sell order without never sending the /start command to the bot
+- ~~Resubscribing to an order which funds were not deposited yet by the seller will never succeed~~
+- Update the testing doc to use ethers instead of rsk3
+- Use the correct derivation path for ethers wallets: **not possible**
+- Use addresses in all lower case to bypass EIP-1191 validation
+- ~~Error when the deposited amount does not match the amount order~~
+- ~~Collect bot+community fees from seller~~
+- ~~Can trade RIF tokens~~

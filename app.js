@@ -1,9 +1,11 @@
-require('dotenv').config();
+require('dotenv').config({
+
+});
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const { start } = require('./bot');
 const mongoConnect = require('./db_connect');
-const { resubscribeInvoices } = require('./ln');
 const logger = require('./logger');
+const { resubscribeInvoices, loadEscrowAccounts } = require('./rsk');
 
 (async () => {
   process.on('unhandledRejection', e => {
@@ -30,6 +32,8 @@ const logger = require('./logger');
 
       const bot = start(process.env.BOT_TOKEN, options);
       await resubscribeInvoices(bot);
+      loadEscrowAccounts().then(count => logger.info(`${count} escrow accounts loaded`))
+
     })
     .on('error', error => logger.error(`Error connecting to Mongo: ${error}`));
 })();

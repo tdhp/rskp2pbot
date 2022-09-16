@@ -30,7 +30,7 @@ start: |
   Молниеносная и взаимовыгодная торговля!
 init_bot_error: Чтобы пользоваться Ботом сначала нужно его инициализировать командой /start
 non_handle_error: 👤 Для пользования этим ботом нужно активировать имя пользователя в Телеграм
-invoice_payment_request: |
+fund_deposit_request: |
   Кто-то хочет купить ваши ${order.amount} сатоши за ${currency} ${order.fiat_amount}.
 
   Buyer Reputation: ${rate}
@@ -82,14 +82,12 @@ buy_correct_format: |
 
   `/buy 0 100\-500 rub "на мобильный" \-2`
 min_invoice_amount: Счет-фактура должна быть на сумму не менее ${minPaymentAmount} сатоши
-min_expiration_time: Срок жизни счета-фактуры должен быть не менее ${expirationTime} минут
 invoice_expired: Срок жизни счета-фактуры истек
 invoice_expired_long: |
   Срок жизни счета-фактуры истек.
   Вы можете мне выставить новый счет командой 👇
 setinvoice_cmd_order: /setinvoice ${orderId} <счет-фактура lightning>
 invoice_require_destination: В счете не указан адрес получателя
-invoice_require_hash: В счете не хватает контрольной суммы хеш
 order_id_invalid: Номер заявки неверен
 order_invalid_type: Это заявка типа ${type}
 order_already_taken: Эту заявку уже исполнил другой пользователь
@@ -140,8 +138,8 @@ rate_counterpart: Оцените вашего контрагента, пожал
 cant_process_order: Эта заявка не может быть обработана, убедитесь, что идентификатор правильный
 cant_release_order: Эта заявка не может быть разблокирована, покупатель не выставил мне счет для получения сатоши.
 no_id_related: У вас нет заказа, связанного с этим идентификатором
-sell_sats: Продать сатоши
-buy_sats: Купить сатоши
+sell_label: Продать сатоши
+buy_label: Купить сатоши
 order_detail: |
   Id: `${order._id}`
 
@@ -157,7 +155,7 @@ order_detail: |
 
   Комиссия Бота \\(sats\\): ${fee}
 
-  Комиссия Сети \\(sats\\): ${order.routing_fee}
+  Комиссия за оплату \\(sats\\): ${order.gas_fee}
 
   Сумма \\(фиат\\) ${order.fiat_code}: ${order.fiat_amount}
 
@@ -169,11 +167,9 @@ order_detail: |
 
   Исполнена: ${takenAt || ''}
 
-  seller invoice hash: `${order.hash || ''}`
+  Escrow account address: `${order.escrow_account.address || ''}`
 
-  seller invoice secret: `${order.secret || ''}`
-
-  buyer payment request: `${order.buyer_invoice || ''}`
+  buyer payment request: `${order.buyer_address || ''}`
 seller: продавец
 buyer: покупатель
 dispute_started_channel: |
@@ -190,8 +186,8 @@ you_started_dispute_to_seller: Вы инициировали разбирате�
 seller_started_dispute_to_buyer: 'Продавец инициировал разбирательство по вашему заказу с id: ${orderId}, мы свяжемся с вами и вашим контрагентом для его разрешения'
 must_be_valid_currency: 'код валюты должен быть допустимым кодом валюты, например: RUB, USD, EUR'
 must_be_number_or_range: 'сумма в валюте должно быть число или числовой диапазон вида: <минимум>-<максимум>.'
-invalid_lightning_address: неверный адрес LN
-unavailable_lightning_address: адрес LN ${la} недоступен
+invalid_address: неверный адрес LN
+unavailable_address: адрес LN ${la} недоступен
 help: |
   /sell <_сумма в сатоши_> <_сумма в валюте_> <_код валюты_> <_метод платежа_> [_премия/дисконт_] - Создать заявку на продажу
   /buy <_сумма в сатоши_> <_сумма в валюте_> <_код валюты_> <_метод платежа_> [_премия/дисконт_] - Создать заявку на покупку
@@ -230,7 +226,7 @@ user_not_found: Пользователь не найден!
 error_parsing_invoice: Ошибка анализа счета-фактуры.
 invalid_id: Неверный ID.
 cant_take_own_order: Вы не можете взять свой собственный заказ!
-send_me_lninvoice: Пожалуйста, пришлите мне счет-фактуру Lightning на ${order.amount} сат, although to make things easier for you I also accept invoices without amount, I will make the payment of ${amount} sats.
+send_me_payout_address: Пожалуйста, пришлите мне счет-фактуру Lightning на ${order.amount} сат, although to make things easier for you I also accept invoices without amount, I will make the payment of ${amount} sats.
 you_have_no_orders: У вас сейчас нет заявок.
 not_rate_for_currency: |
   ${fiatRateProvider} для этой фиатной валюты нет обменного курсас.
@@ -238,7 +234,7 @@ not_rate_for_currency: |
   Если вы хотите, чтобы эта монета была включена в список /listcurrencies, вы можете сделать запрос здесь 👇
 
   🌐 https://yadio.io/api.html
-invoice_with_incorrect_amount: В счете указана неверная сумма.
+incorrect_amount_deposited_in_escrow: 'The amount sent to the escrow account was incorrect. Returning ${depositedAmount} Weis minus gas fees to address ${sellerAddress}. Try to make another deposit with the right amount this time.'
 invoice_updated: 📝 Счет успешно обновлен!
 invoice_updated_and_will_be_paid: Счет успешно обновлен и будет оплачен в ближайшие несколько секунд!
 invoice_already_being_paid: Вы уже отправили счет за эту заявку, и я пытаюсь оплатить его прямо сейчас.
@@ -353,6 +349,8 @@ pending_payment_success: |
   Я оплатил счет Lightning для вашего идентификатора покупки: ${id}!
 
   Подтверждение оплаты: ${paymentSecret}
+not_enough_fund_for_payment_of_earnings: |
+  I have not enough funds to pay your earning of ${earning} right now. I will retry later.
 pending_payment_failed: |
   Я пытался оплатить ваш счет в общей сложности ${attempts} раза, и все потерпели неудачу, иногда пользователи сети Lightning не могут получать платежи потому что в вашем кошельке/узле недостаточно входной емкости, решение может состоять в том, чтобы сгенерировать новый счет из другого кошелька, у которого есть емкость.
 pending_payment_failed_to_admin: |
@@ -373,12 +371,13 @@ price: цена
 for: на
 generic_error: Произошла непредвиденная ошибка
 sats: сатоши
+rif: RIFs
 no_capital_letters: 🤖 Пожалуйста, пишите команды прописными буквами
 unknown_command: 😕 Не понимаю Вас. Воспользуйтесь меню /help для списка доступных команд
 invoice_invalid_error: |
-  Ошибка при чтении инвойса Lightning. Ожидаю получить текстовую строку с начальными буквами 'lnbc'.
+  Error parsing the invoice. Please copy-paste a valid RSK address starting with '0x'.
 
-  Если Вы хотите отменить и вернуться в режим ввода команд, напечатайте /exit
+  If you want to abort and return to the command entering mode just run /exit
 invoice_expiry_too_short_error: Время истечения счета слишком короткое
 invoice_has_expired_error: Счет истек
 invoice_has_wrong_destination_error: Получатель счета неверен
@@ -404,11 +403,13 @@ take_dispute: Take dispute
 not_authorized: 🤨 You are not authorized to perform this operation
 need_default_community: To perform this operation you need to have a default community
 enter_sats_amount: Enter sats amount, enter only numbers.
+enter_rif_amount: Enter RIF amount, enter only numbers.
 market_price: Market price
 enter_currency: 'Enter a currency by your code, eg: USD'
 choose_currency: Choose a currency
 enter_currency_amount: Enter the amount of ${currency}, enter only numbers.
 enter_premium_discount: Enter the premium(+) or discount(-) to apply to the market price.
+select_asset: Pick the asset token you would like to trade for.
 no_premium_or_discount: No premium or discount
 enter_payment_method: Enter the payment method
 invalid_currency: Invalid currency
@@ -430,7 +431,7 @@ max_allowed: The maximum allowed is ${max}
 dispute_channel: Dispute channel
 not_wizard: You are not in wizard mode at the moment, if you have doubts you can type /help
 wizard_help: You are in wizard mode, if you need to go back to command mode run /exit
-hold_invoice_memo: '@${botName} - Escrow amount Order #${orderId}: SELL BTC for ${fiatCode} ${fiatAmount} - It WILL FREEZE IN WALLET. It will release once you run /release. It will return if buyer does not confirm the payment'
+deposit_funds_in_escrow_memo: '@${botName} - Escrow amount Order #${orderId}: SELL BTC for ${fiatCode} ${fiatAmount} - It WILL FREEZE IN WALLET. It will release once you run /release. It will return if buyer does not confirm the payment'
 tap_button: Select an order to perform the operation
 tap_release: Select the order to release the funds, once you touch the button the operation cannot be reversed.
 earnings: Earnings

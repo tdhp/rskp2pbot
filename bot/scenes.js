@@ -1,19 +1,19 @@
 const { Scenes } = require('telegraf');
-const { isValidInvoice } = require('./validations');
-const { Order, PendingPayment } = require('../models');
+const { toValidLowerCaseAddress } = require('./validations');
+const { PendingPayment } = require('../models');
 const { waitPayment, addInvoice, showHoldInvoice } = require('./commands');
 const { getCurrency, getUserI18nContext } = require('../util');
 const messages = require('./messages');
-const { isPendingPayment } = require('../ln');
 const logger = require('../logger');
+const orderQueries = require('./orderQueries')
 
-const addInvoiceWizard = new Scenes.WizardScene(
-  'ADD_INVOICE_WIZARD_SCENE_ID',
+const addBuyerAddressWizard = new Scenes.WizardScene(
+  'ADD_BUYER_ADDRESS_WIZARD_SCENE_ID',
   async ctx => {
     try {
       const { order } = ctx.wizard.state;
       const expirationTime =
-        parseInt(process.env.HOLD_INVOICE_EXPIRATION_WINDOW) / 60;
+        parseInt(process.env.WINDOW_TO_DEPOSIT_DEPOSIT_FUNDS_IN_ESCROW_ACCOUNT) / 60;
       const currency = getCurrency(order.fiat_code);
       const symbol =
         !!currency && !!currency.symbol_native
@@ -26,7 +26,7 @@ const addInvoiceWizard = new Scenes.WizardScene(
         expirationTime
       );
 
-      order.status = 'WAITING_BUYER_INVOICE';
+      order.status = 'WAITING_BUYER_ADDRESS';
       await order.save();
       return ctx.wizard.next();
     } catch (error) {
@@ -39,16 +39,16 @@ const addInvoiceWizard = new Scenes.WizardScene(
       if (ctx.message.document)
         return await ctx.reply(ctx.i18n.t('must_enter_text'));
 
-      const lnInvoice = ctx.message.text.trim();
+      const buyerAddress = ctx.message.text.trim();
       let { bot, buyer, seller, order } = ctx.wizard.state;
       // We get an updated order from the DB
-      order = await Order.findOne({ _id: order._id });
+      order = await orderQueries.getOrderById(order._id);
       if (!order) {
         await ctx.reply(ctx.i18n.t('generic_error'));
         return ctx.scene.leave();
       }
 
-      const res = await isValidInvoice(ctx, lnInvoice);
+      const res = await toValidLowerCaseAddress(ctx, buyerAddress);
       if (!res.success) {
         return;
       }
@@ -58,15 +58,12 @@ const addInvoiceWizard = new Scenes.WizardScene(
         return ctx.scene.leave();
       }
 
-      if (order.status !== 'WAITING_BUYER_INVOICE') {
+      if (order.status !== 'WAITING_BUYER_ADDRESS') {
         await messages.cantAddInvoiceMessage(ctx);
         return ctx.scene.leave();
       }
 
-      if (res.invoice.tokens && res.invoice.tokens !== order.amount)
-        return await messages.incorrectAmountInvoiceMessage(ctx);
-
-      await waitPayment(ctx, bot, buyer, seller, order, lnInvoice);
+      await waitPayment(ctx, bot, buyer, seller, order, res.allLowerCaseAddress);
 
       return ctx.scene.leave();
     } catch (error) {
@@ -81,6 +78,7 @@ const addInvoicePHIWizard = new Scenes.WizardScene(
   async ctx => {
     try {
       const { buyer, order } = ctx.wizard.state;
+      logger.debug(`addInvoicePHIWizard for order: "${order._id}"`)
       const i18nCtx = await getUserI18nContext(buyer);
       await messages.sendMeAnInvoiceMessage(ctx, order.amount, i18nCtx);
 
@@ -95,44 +93,40 @@ const addInvoicePHIWizard = new Scenes.WizardScene(
       if (ctx.message.document)
         return await ctx.reply(ctx.i18n.t('must_enter_text'));
 
-      const lnInvoice = ctx.message.text.trim();
+      const buyerAddress = ctx.message.text.trim();
       let { buyer, order } = ctx.wizard.state;
       // We get an updated order from the DB
-      order = await Order.findOne({ _id: order._id });
+      order = await orderQueries.getOrderById(order._id);
       if (!order) {
         await ctx.reply(ctx.i18n.t('generic_error'));
         return ctx.scene.leave();
       }
 
-      const res = await isValidInvoice(ctx, lnInvoice);
+      const res = await toValidLowerCaseAddress(ctx, buyerAddress);
       if (!res.success) {
-        return;
+        logger.notice(`new buyer address "${buyerAddress}" for order "${order._id}" is invalid`)
+        await messages.invalidAddress(ctx);
+        return ctx.scene.reenter();
       }
-
-      if (!!res.invoice.tokens && res.invoice.tokens !== order.amount)
-        return await messages.incorrectAmountInvoiceMessage(ctx);
 
       const isScheduled = await PendingPayment.findOne({
         order_id: order._id,
         attempts: { $lt: process.env.PAYMENT_ATTEMPTS },
         is_invoice_expired: false,
       });
-      // We check if the payment is on flight
-      const isPending = await isPendingPayment(order.buyer_invoice);
 
-      if (!!isScheduled || !!isPending)
+      if (!!isScheduled)
         return await messages.invoiceAlreadyUpdatedMessage(ctx);
 
-      // if the payment is not on flight, we create a pending payment
       if (!order.paid_hold_buyer_invoice_updated) {
         logger.debug(`Creating pending payment for order ${order._id}`);
         order.paid_hold_buyer_invoice_updated = true;
         const pp = new PendingPayment({
           amount: order.amount,
-          payment_request: lnInvoice,
+          asset: order.asset,
+          payment_address: res.allLowerCaseAddress,
           user_id: buyer._id,
           description: order.description,
-          hash: order.hash,
           order_id: order._id,
         });
         await order.save();
@@ -209,7 +203,7 @@ const addFiatAmountWizard = new Scenes.WizardScene(
 );
 
 module.exports = {
-  addInvoiceWizard,
+  addBuyerAddressWizard,
   addFiatAmountWizard,
   addInvoicePHIWizard,
 };

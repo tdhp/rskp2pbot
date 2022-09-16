@@ -29,6 +29,7 @@ const CommunitySchema = new mongoose.Schema({
     trim: true,
     required: true,
   },
+  asset: { type: String },
   creator_id: { type: String },
   group: { type: String, trim: true }, // group Id or public name
   order_channels: {

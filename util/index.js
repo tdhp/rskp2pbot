@@ -2,8 +2,11 @@ const axios = require('axios');
 const { I18n } = require('@grammyjs/i18n');
 const currencies = require('./fiat.json');
 const languages = require('./languages.json');
-const { Order, Community } = require('../models');
+const { Community } = require('../models');
 const logger = require('../logger');
+const orderQueries = require('../bot/orderQueries')
+const { dApi3Server } = require('../rsk/connect')
+const { BigDecimal } = require('./big_decimal')
 
 // ISO 4217, all ISO currency codes are 3 letters but users can trade shitcoins
 const isIso4217 = code => {
@@ -56,7 +59,7 @@ const numberFormat = (code, number) => {
 const handleReputationItems = async (buyer, seller, amount) => {
   try {
     const yesterday = new Date(Date.now() - 86400000).toISOString();
-    const orders = await Order.find({
+    const orders = await orderQueries.getOrdersByQuery({
       status: 'SUCCESS',
       seller_id: buyer._id,
       buyer_id: seller._id,
@@ -118,11 +121,48 @@ const handleReputationItems = async (buyer, seller, amount) => {
   }
 };
 
+const getRIFFiatPrice = async (fiatCode, fiatAmount) => {
+  try {
+    const currency = getCurrency(fiatCode)
+    if (!currency.price) return
+
+    const code = currency.code.substring(0, 3).toLowerCase();
+    const response = await axios.get(`${process.env.RIF_FIAT_RATE_EP}`);
+    if (response.data.error) {
+      return 0;
+    }
+    const currentPriceCurrencies = Object.keys(response.data.market_data.current_price);
+    const currentPriceValues = Object.values(response.data.market_data.current_price);
+    for (let i = 0; i < currentPriceValues.length; i++) {
+      if (currentPriceCurrencies[i] === code) {
+        const sats = fiatAmount / currentPriceValues[i];
+
+        return parseInt(sats);
+      }
+    }
+    logger.error(`getRIFFiatPrice could not find price in requested currency code: ${code}`)
+  } catch (error) {
+    logger.error(error);
+  }
+}
+
 const getBtcFiatPrice = async (fiatCode, fiatAmount) => {
   try {
-    const currency = getCurrency(fiatCode);
-    if (!currency.price) return;
-    // Before hit the endpoint we make sure the code have only 3 chars
+    const currency = getCurrency(fiatCode)
+    if (!currency.price) return
+    switch (currency.code) {
+      case 'USD':
+        return await getBtcUsdPrice(currency, fiatAmount)
+      default:
+        return await getBtcNonUsdPrice(currency, fiatAmount)
+    }
+  } catch (e) {
+    logger.error(`getBtcFiatPrice ${e}`)
+  }
+}
+
+const getBtcNonUsdPrice = async (currency, fiatAmount) => {
+  try {
     const code = currency.code.substring(0, 3);
     const response = await axios.get(`${process.env.FIAT_RATE_EP}/${code}`);
     if (response.data.error) {
@@ -133,6 +173,21 @@ const getBtcFiatPrice = async (fiatCode, fiatAmount) => {
     return parseInt(sats);
   } catch (error) {
     logger.error(error);
+  }
+};
+
+const getBtcUsdPrice = async (currency, fiatAmount) => {
+  try {
+
+    const dataFeed = await dApi3Server.readDataFeedWithId(process.env.API3_BTC_USD_BEACON_ID)
+    const dollarPerBtc = BigDecimal.fromBigInt(dataFeed.value.toBigInt())
+    const sats = (fiatAmount / parseFloat(dollarPerBtc.toString())) * 100000000;
+    logger.info(`getBtcUsdPrice from API3 returned $${dollarPerBtc.toString()}/ BTC, ${fiatAmount} converts to ${sats.toString()} sats`)
+
+    return sats;
+  } catch (error) {
+    logger.error(error);
+    return 0;
   }
 };
 
@@ -319,7 +374,7 @@ const getDetailedOrder = (i18n, order, buyer, seller) => {
     const fee = order.fee ? parseInt(order.fee) : '';
     const creator =
       order.creator_id === buyerId ? buyerUsername : sellerUsername;
-    const message = i18n.t('order_detail', {
+    return i18n.t('order_detail', {
       order,
       creator,
       buyerUsername,
@@ -331,8 +386,6 @@ const getDetailedOrder = (i18n, order, buyer, seller) => {
       paymentMethod,
       priceMargin,
     });
-
-    return message;
   } catch (error) {
     logger.error(error);
   }
@@ -344,7 +397,7 @@ const isDisputeSolver = (community, user) => {
     return false;
   }
 
-  return community.solvers.some(solver => solver.id == user._id);
+  return community.solvers.some(solver => solver.id === user._id);
 };
 
 // Return the fee the bot will charge to the seller
@@ -358,6 +411,7 @@ const getFee = async (amount, communityId) => {
   const community = await Community.findOne({ _id: communityId });
   communityFee = communityFee * (community.fee / 100);
 
+  logger.debug(`order fees breakdown: bot = ${botFee}, community = ${communityFee}`)
   return botFee + communityFee;
 };
 
@@ -385,6 +439,7 @@ module.exports = {
   getCurrency,
   handleReputationItems,
   getBtcFiatPrice,
+  getRIFFiatPrice,
   getBtcExchangePrice,
   getCurrenciesWithPrice,
   getEmojiRate,

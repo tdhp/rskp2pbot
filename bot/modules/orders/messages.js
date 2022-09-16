@@ -19,6 +19,7 @@ exports.listOrdersResponse = async orders => {
       [''].join(''),
       ['`Id      `: ', '`', order.id, '`'].join(''),
       ['`Status  `: ', '`', status, '`'].join(''),
+      ['`Asset`: ', '`', order.asset, '`'].join(''),
       ['`Sats amt`: ', '`', amount, '`'].join(''),
       ['`Fiat amt`: ', '`', fiatAmount, '`'].join(''),
       ['`Fiat    `: ', '`', order.fiat_code, '`'].join(''),
@@ -39,7 +40,13 @@ exports.listOrdersResponse = async orders => {
 exports.createOrderWizardStatus = (i18n, state) => {
   const { type, priceMargin } = state;
   const action = type === 'sell' ? i18n.t('selling') : i18n.t('buying');
-  const sats = state.sats ? state.sats + ' ' : '';
+  let asset = '__';
+  let rateProvider = '__';
+  if (state.asset) {
+    asset = state.asset === 'sats' ? i18n.t('sats') : i18n.t('rif')
+    rateProvider = state.asset === 'sats' ? process.env.FIAT_RATE_NAME : process.env.RIF_FIAT_RATE_NAME
+  }
+  const sats = state.sats ? state.sats + ' ' : '__';
   const paymentAction =
     type === 'sell' ? i18n.t('receive_payment') : i18n.t('pay');
   const fiatAmount =
@@ -47,11 +54,11 @@ exports.createOrderWizardStatus = (i18n, state) => {
   const currency = state.currency || '__';
 
   const text = [
-    `${action} ${sats}${i18n.t('sats')}`,
+    `${action} ${sats} ${asset}`,
     `${i18n.t('for')} ${fiatAmount} ${currency}.`,
     `${paymentAction} ${i18n.t('by')} ${state.method || '__'}`,
     priceMargin
-      ? `${i18n.t('rate')}: ${process.env.FIAT_RATE_NAME} ${priceMargin}%`
+      ? `${i18n.t('rate')}: ${rateProvider} ${priceMargin}%`
       : ``,
     state.error && `Error: ${state.error}`,
     ` `,

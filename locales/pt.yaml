@@ -30,7 +30,7 @@ start: |
   Faça uma transação rápida e segura!
 init_bot_error: Para usar este bot, você precisa primeiro inicializar a inicialização com o comando /start
 non_handle_error: 👤 Para usar este bot, você precisa ativar seu nome de usuário do Telegram, para ativá-lo, abra o menu de hambúrguer no canto superior esquerdo e selecione Configurações -> editar Perfil -> nome de usuário
-invoice_payment_request: |
+fund_deposit_request: |
   Alguém quer te comprar ${order.amount} sats por ${currency} ${order.fiat_amount}.
 
   Reputação do comprador: ${rate}
@@ -83,14 +83,12 @@ buy_correct_format: |
 
   `/buy 0 100\-500 USD "forma de pagamento" \-2`
 min_invoice_amount: fatura precisa ser igual ou superior a que ${minPaymentAmount} satoshis
-min_expiration_time: A expiração do tempo para a fatura deve ser de pelo menos ${expirationTime} minutos
 invoice_expired: Fatura expirou
 invoice_expired_long: |
   Fatura expirou. Você pode usar o seguinte comando para me enviar uma nova fatura para receber os satoshis 👇
 setinvoice_cmd_order: |
   /setinvoice ${orderId} \\<Lightning Invoice\\>
 invoice_require_destination: Fatura precisa de um endereço de receptor
-invoice_require_hash: Fatura precisa de um hash
 order_id_invalid: ID do pedido inválido
 order_invalid_type: Este ${type} pedido é inválido
 order_already_taken: Este pedido já foi feito por outro usuário.
@@ -141,8 +139,8 @@ rate_counterpart: 'Por favor, qualifique sua contraparte:'
 cant_process_order: Este pedido não pode ser processado, verifique se o ID está correto.
 cant_release_order: Este pedido não pode ser divulgado, o comprador não enviou uma fatura para onde pagar
 no_id_related: Você não tem nenhum pedido associado a este ID.
-sell_sats: Venda Satoshis
-buy_sats: Compre Satoshis
+sell_label: Venda Satoshis
+buy_label: Compre Satoshis
 order_detail: |
   Id: `${order._id}`
 
@@ -158,7 +156,7 @@ order_detail: |
 
   Taxa de bot \\(sats\\): ${fee}
 
-  Taxa de roteamento \\(sats\\): ${order.routing_fee}
+  Taxa de pagamento \\(sats\\): ${order.gas_fee}
 
   Quantidade fiduciária \\(fiat\\) ${order.fiat_code}: ${order.fiat_amount}
 
@@ -170,11 +168,9 @@ order_detail: |
 
   Ocupada: ${takenAt || ''}
 
-  Hash da fatura do vendedor: `${order.hash || ''}`
+  Endereço da conta de custódia: `${order.escrow_account.address || ''}`
 
-  Secreto da fatura do vendedor: `${order.secret || ''}`
-
-  Solicitação de pagamento do comprador: `${order.buyer_invoice || ''}`
+  Solicitação de pagamento do comprador: `${order.buyer_address || ''}`
 seller: vendedora
 buyer: compradora
 dispute_started_channel: |
@@ -191,8 +187,8 @@ you_started_dispute_to_seller: 🥴 Você iniciou uma disputa para o seu pedido 
 seller_started_dispute_to_buyer: '🥴 O vendedor iniciou uma disputa para o seu pedido com ID: ${orderId}, entraremos em contato com você e sua contraparte para resolvê-lo.'
 must_be_valid_currency: 'Fiat_code deve ser um código válido, por exemplo: USD, EUR, você pode ver uma lista completa executando /listcurrencies'
 must_be_number_or_range: 'Fiat_amount deve ser um número ou intervalo numérico no <mínima>-<máxima> formato'
-invalid_lightning_address: Inválida lightning address
-unavailable_lightning_address: Indisponível lightning address ${la}
+invalid_address: Inválida lightning address
+unavailable_address: Indisponível lightning address ${la}
 help: |
   /sell <quantia em sats> <quantia em fiat> <código fiduciário> <forma de pagamento> premium/desconto - Criar uma ordem de venda
   /buy <quantia em sats> <quantia em fiat> <código fiduciário> <forma de pagamento> premium/desconto - Cria um pedido de compra
@@ -232,7 +228,7 @@ user_not_found: O usuário não foi encontrado no banco de dados!
 parse_invoice_error: Erro analisando a fatura
 invalid_id: ID Inválido
 cant_take_own_order: Você não pode fazer seu próprio pedido.
-send_me_lninvoice: Por favor, envie-me uma fatura de lightning para ${amount} sats, Embora para facilitar as coisas para você, eu também aceito faturas sem valor, farei o pagamento de ${amount} sats.
+send_me_payout_address: Por favor, envie-me uma fatura de lightning para ${amount} sats, Embora para facilitar as coisas para você, eu também aceito faturas sem valor, farei o pagamento de ${amount} sats.
 you_have_no_orders: Você não tem ordens ativas
 not_rate_for_currency: |
   ${fiatRateProvider} Há uma taxa de câmbio para esta moeda,
@@ -240,7 +236,7 @@ not_rate_for_currency: |
   Se você quiser essa moeda na listagem, vá para este link para fazer uma solicitação. 👇
 
   🌐 https://yadio.io/api.html
-invoice_with_incorrect_amount: A quantidade declarada na fatura está incorreta
+incorrect_amount_deposited_in_escrow: 'The amount sent to the escrow account was incorrect. Returning ${depositedAmount} Weis minus gas fees to address ${sellerAddress}. Try to make another deposit with the right amount this time.'
 invoice_updated: 📝 A fatura foi atualizada corretamente!
 invoice_updated_and_will_be_paid: As faturas foram atualizadas corretamente e serão pagas nos próximos segundos!
 invoice_already_being_paid: Você já enviou uma fatura para este pedido e estou tentando pagar neste momento certo.
@@ -349,9 +345,11 @@ pending_payment_success_to_admin: |
 
   Prova de pagamento: ${paymentSecret}
 pending_payment_success: |
-  Eu paguei a fatura de lightning para ${amount} satoshis, ordem Id: ${id}!
+  Eu paguei ${amount} satoshis, ordem Id: ${id}!
 
   Prova de pagamento: ${paymentSecret}
+not_enough_fund_for_payment_of_earnings: |
+  I have not enough funds to pay your earning of ${earning} right now. I will retry later.
 pending_payment_failed: |
   🤖 Eu tentei pagar sua fatura ${attempts} Tempos e falhas, às vezes os usuários da rede de lightning não podem receber pagamentos porque sua carteira não possui capacidade de entrada suficiente ou o nó não está bem conectado na rede. Você pode tentar gerar uma fatura de outra carteira.
 pending_payment_failed_to_admin: |
@@ -372,12 +370,13 @@ price: Preço
 for: Por
 generic_error: Um erro ocorreu
 sats: sats
+rif: RIFs
 no_capital_letters: 🤖 Você está tentando executar um comando com a primeira letra capitalizada. Escreva o comando inteiro em minúsculas.
 unknown_command: 😕 Eu não entendi. Por favor, use /help para ver a lista de comandos disponíveis
 invoice_invalid_error: |
-  Erro analisando a fatura. Por favor, copiar-colar uma fatura de lightning começando com 'lnbc'.
+  Error parsing the invoice. Please copy-paste a valid RSK address starting with '0x'.
 
-  Se você deseja abortar e retornar ao modo de entrada de comando, basta executar /exit
+  If you want to abort and return to the command entering mode just run /exit
 invoice_expiry_too_short_error: A expiração da fatura é muito curta
 invoice_has_expired_error: Fatura expirou
 invoice_has_wrong_destination_error: Fatura tem destino errado
@@ -403,11 +402,13 @@ take_dispute: Tomar disputa
 not_authorized: 🤨 Você não está autorizado a executar esta operação
 need_default_community: Para executar esta operação, você precisa ter uma comunidade padrão
 enter_sats_amount: Digite o valor do SATS, digite apenas números.
+enter_rif_amount: Enter RIF amount, enter only numbers.
 market_price: Preço de mercado
 enter_currency: 'Digite uma moeda pelo seu código, por exemplo: USD'
 choose_currency: Escolha uma moeda
 enter_currency_amount: Digite o valor de ${currency}, digite apenas números.
 enter_premium_discount: Digite o prêmio(+) ou desconto(-) para aplicar ao preço de mercado.
+select_asset: Pick the asset token you would like to trade for.
 no_premium_or_discount: Sem prêmio ou desconto
 enter_payment_method: Insira o método de pagamento
 invalid_currency: Moeda inválida
@@ -429,7 +430,7 @@ max_allowed: O máximo permitido é ${max}
 dispute_channel: Canal de disputa
 not_wizard: Você não está no modo assistente no momento, se tiver dúvidas, pode digitar /help
 wizard_help: Você está no modo Wizard, se precisar voltar ao modo de comando executar /exit
-hold_invoice_memo: '@${botName} - Ordem de quantidade de garantia #${orderId}: Venda o BTC para ${fiatCode} ${fiatAmount} - Vai congelar na carteira. Ele será lançado assim que você correr /release. Ele retornará se o comprador não confirmar o pagamento'
+deposit_funds_in_escrow_memo: '@${botName} - Ordem de quantidade de garantia #${orderId}: Venda o BTC para ${fiatCode} ${fiatAmount} - Vai congelar na carteira. Ele será lançado assim que você correr /release. Ele retornará se o comprador não confirmar o pagamento'
 tap_button: Selecione um pedido para executar a operação
 tap_release: Selecione o pedido para liberar os fundos, depois de tocar no botão, a operação não pode ser revertida.
 earnings: Ganhos

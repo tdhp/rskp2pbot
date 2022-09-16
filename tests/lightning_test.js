@@ -3,7 +3,7 @@ const { expect } = require('chai');
 const lightning = require('lightning');
 const { parsePaymentRequest } = require('invoices');
 const { createHodlInvoiceResponse } = require('./lightningResponse');
-const { createHoldInvoice } = require('../ln');
+const { useEscrowAccount } = require('../rsk');
 
 describe('Testing lighting network', () => {
   it('Should create hold invoice', async () => {
@@ -11,7 +11,7 @@ describe('Testing lighting network', () => {
     const stub = sinon.stub(lightning, 'createHodlInvoice');
     // Then we test our internal lightning call
     stub.returns(createHodlInvoiceResponse);
-    const { hash, request } = await createHoldInvoice({
+    const { hash, request } = await useEscrowAccount({
       description: 'Holis',
       amount: 200,
     });

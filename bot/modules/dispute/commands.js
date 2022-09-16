@@ -7,6 +7,7 @@ const {
 const messages = require('./messages');
 const globalMessages = require('../../messages');
 const logger = require('../../../logger');
+const orderActions = require('../../ordersActions')
 
 const dispute = async ctx => {
   try {
@@ -83,7 +84,7 @@ const deleteDispute = async ctx => {
     if (!orderId) return;
 
     if (!(await validateObjectId(ctx, orderId))) return;
-    const order = await Order.findOne({ _id: orderId });
+    const order = await orderQueries.getOrderById(orderId);
 
     if (!order) {
       return await globalMessages.notActiveOrderMessage(ctx);

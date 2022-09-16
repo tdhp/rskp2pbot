@@ -30,12 +30,12 @@ start: |
   Make a quick and safe transaction!
 init_bot_error: to use this Bot you need to first initialize the boot with the command /start
 non_handle_error: 👤 To use this bot you need to activate your Telegram Username, to activate it open the hamburger menu on the top left and select settings -> edit profile -> username
-invoice_payment_request: |
+fund_deposit_request: |
   Somebody wants to buy you ${order.amount} sats for ${currency} ${order.fiat_amount}.
 
   Buyer Reputation: ${rate}
 
-  Please pay this invoice to start up your selling process, this invoice will expire in ${expirationTime} minutes
+  Please send exactly ${amount} sats (order + fees) at this address to start up your selling process, this escrow account will expire in ${expirationTime} minutes
 pending_sell: |
   📝 Your offer has been published in the ${channel} channel
 
@@ -83,14 +83,12 @@ buy_correct_format: |
 
   `/buy 0 100\-500 USD "payment method" \-2`
 min_invoice_amount: invoice needs to be equal or higher that ${minPaymentAmount} satoshis
-min_expiration_time: Time expiration for the invoice shold be of at least ${expirationTime} minutes
 invoice_expired: Invoice has expired
 invoice_expired_long: |
   Invoice has expired. You can use the following command to send me a new invoice so as to receive the satoshis 👇
 setinvoice_cmd_order: |
   /setinvoice ${orderId} \\<Lightning Invoice\\>
 invoice_require_destination: Invoice needs a receiver adress
-invoice_require_hash: Invoice needs a hash
 order_id_invalid: Invalid order ID
 order_invalid_type: This ${type} order is invalid
 order_already_taken: This order has already been taken by another user.
@@ -99,7 +97,7 @@ begin_take_buy: |
   🤖 Press Continue to take the offer, if you press Cancel you will be released from the order and it will be republished. You have ${expirationTime} minutes before this order expires. 👇
 continue: Continue
 cancel: Cancel
-pay_invoice: Please pay this invoice of ${amount} sats for ${currency} ${fiatAmount} to start the operation.
+pay_invoice: Please send exactly ${amountAndFees} sats for order of ${amount} against ${currency} ${fiatAmount} to start the operation.
 payment_received: |
   🤑 Payment received!
 
@@ -141,8 +139,8 @@ rate_counterpart: 'Please qualify your counterparty:'
 cant_process_order: This order cannot be processed, please check the Id is correct.
 cant_release_order: This order cannot be released, the buyer has not sent an invoice where to pay
 no_id_related: You do not have any order associated with this Id.
-sell_sats: Sell satoshis
-buy_sats: Buy satoshis
+sell_label: Sell
+buy_label: Buy
 order_detail: |
   Id: `${order._id}`
 
@@ -158,7 +156,7 @@ order_detail: |
 
   Bot Fee \\(sats\\): ${fee}
 
-  Routing Fee \\(sats\\): ${order.routing_fee}
+  Payment Fee \\(sats\\): ${order.gas_fee}
 
   Fiat Amount \\(fiat\\) ${order.fiat_code}: ${order.fiat_amount}
 
@@ -170,11 +168,9 @@ order_detail: |
 
   Taken: ${takenAt || ''}
 
-  seller invoice hash: `${order.hash || ''}`
+  Escrow account address: `${order.escrow_account.address || ''}`
 
-  seller invoice secret: `${order.secret || ''}`
-
-  buyer payment request: `${order.buyer_invoice || ''}`
+  buyer payment request: `${order.buyer_address || ''}`
 seller: seller
 buyer: buyer
 dispute_started_channel: |
@@ -191,8 +187,8 @@ you_started_dispute_to_seller: 🥴 You have started a dispute for your sell ord
 seller_started_dispute_to_buyer: '🥴 The Seller has initiated a dispute for your order with Id: ${orderId}, we will contact you and your counterparty to resolve it.'
 must_be_valid_currency: 'Fiat_code must be a valid code for example: USD, EUR, you can see a complete list executing /listcurrencies'
 must_be_number_or_range: 'Fiat_amount must be a number or numeric range in the  <minimum>-<maximum> format'
-invalid_lightning_address: Invalid lightning adress
-unavailable_lightning_address: Unavailable lightning adress ${la}
+invalid_address: Invalid address
+unavailable_address: Unavailable address ${la}
 help: |
   /sell <_sats amount_> <_fiat amount_> <_fiat code_> <_payment method_> [premium/discount] - Creates a Sell order
   /buy <_sats amount_> <_fiat amount_> <_Fiat code_> <_payment method_> [premium/discount] - Creates a Purchase Order
@@ -232,7 +228,7 @@ user_not_found: User was not found in the database!
 parse_invoice_error: Error parsing invoice
 invalid_id: Invalid Id
 cant_take_own_order: You cannot take your own order.
-send_me_lninvoice: Please send me a lightning invoice for ${amount} sats, although to make things easier for you I also accept invoices without amount, I will make the payment of ${amount} sats.
+send_me_payout_address: Please send me a lightning invoice for ${amount} sats, although to make things easier for you I also accept invoices without amount, I will make the payment of ${amount} sats.
 you_have_no_orders: You don't have active orders
 not_rate_for_currency: |
   ${fiatRateProvider} Theres is no exchange rate for this currency,
@@ -240,7 +236,7 @@ not_rate_for_currency: |
   If you woud like this currency in the listing go to this link to place a request. 👇
 
   🌐 https://yadio.io/api.html
-invoice_with_incorrect_amount: the amount stated in the invoice is incorrect
+incorrect_amount_deposited_in_escrow: 'The amount sent to the escrow account was incorrect. Returning ${depositedAmount} Weis minus gas fees to address ${sellerAddress}. Try to make another deposit with the right amount this time.'
 invoice_updated: 📝 Invoice has been correctly updated!
 invoice_updated_and_will_be_paid: Invoices has been correctly updated and will be paid in the next few seconds!
 invoice_already_being_paid: You have alreday send an invoice for this order and I am trying to pay it in this very rightmoment.
@@ -349,11 +345,13 @@ pending_payment_success_to_admin: |
 
   Proof of payment: ${paymentSecret}
 pending_payment_success: |
-  I have paid the lightning invoice for ${amount} satoshis, order Id: ${id}!
+  I have paid ${amount} satoshis, order Id: ${id}!
 
   Proof of payment: ${paymentSecret}
+not_enough_fund_for_payment_of_earnings: |
+  I have not enough funds to pay yours earning of ${earning} right now. I will retry later.
 pending_payment_failed: |
-  🤖 I have tried to pay your invoice ${attempts} times and failed, sometimes Lightning network users can't receive payments because their wallet has not enough inbound capacity or the node is not well connected in the network. You might want to try to generate an invoice from another wallet.
+  🤖 I have tried to pay your invoice ${attempts} times and failed.
 pending_payment_failed_to_admin: |
   Payment of the invoice for the Buy order ${orderId} of user @${username} has failed.
 
@@ -372,10 +370,11 @@ price: Price
 for: For
 generic_error: An error occurred
 sats: sats
+rif: RIFs
 no_capital_letters: 🤖 You are trying to execute a command with the first letter capitalized. Please write the entire command in lowercase.
 unknown_command: 😕 I do not understand. Please use /help to see the list of available commands
 invoice_invalid_error: |
-  Error parsing the invoice. Please copy-paste a lightning invoice starting with 'lnbc'.
+  Error parsing the invoice. Please copy-paste a valid RSK address starting with '0x'.
 
   If you want to abort and return to the command entering mode just run /exit
 invoice_expiry_too_short_error: Invoice expiry is too short
@@ -403,11 +402,13 @@ take_dispute: Take dispute
 not_authorized: 🤨 You are not authorized to perform this operation
 need_default_community: To perform this operation you need to have a default community
 enter_sats_amount: Enter sats amount, enter only numbers.
+enter_rif_amount: Enter RIF amount, enter only numbers.
 market_price: Market price
 enter_currency: 'Enter a currency by your code, eg: USD'
 choose_currency: Choose a currency
 enter_currency_amount: Enter the amount of ${currency}, enter only numbers.
 enter_premium_discount: Enter the premium(+) or discount(-) to apply to the market price.
+select_asset: Pick the asset token you would like to trade for.
 no_premium_or_discount: No premium or discount
 enter_payment_method: Enter the payment method
 invalid_currency: Invalid currency
@@ -429,7 +430,7 @@ max_allowed: The maximum allowed is ${max}
 dispute_channel: Dispute channel
 not_wizard: You are not in wizard mode at the moment, if you have doubts you can type /help
 wizard_help: You are in wizard mode, if you need to go back to command mode run /exit
-hold_invoice_memo: '@${botName} - Escrow amount Order #${orderId}: SELL BTC for ${fiatCode} ${fiatAmount} - It WILL FREEZE IN WALLET. It will release once you run /release. It will return if buyer does not confirm the payment'
+deposit_funds_in_escrow_memo: '@${botName} - Escrow amount Order #${orderId}: SELL BTC for ${fiatCode} ${fiatAmount} - It WILL FREEZE IN WALLET. It will release once you run /release. It will return if buyer does not confirm the payment'
 tap_button: Select an order to perform the operation
 tap_release: Select the order to release the funds, once you touch the button the operation cannot be reversed.
 earnings: Earnings

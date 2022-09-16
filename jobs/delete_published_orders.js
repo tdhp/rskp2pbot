@@ -1,6 +1,6 @@
-const { Order } = require('../models');
 const { deleteOrderFromChannel } = require('../util');
 const logger = require('../logger');
+const orderQueries = require('../bot/orderQueries')
 
 const deleteOrders = async bot => {
   try {
@@ -10,7 +10,7 @@ const deleteOrders = async bot => {
         parseInt(process.env.ORDER_PUBLISHED_EXPIRATION_WINDOW)
     );
     // We get the pending orders where time is expired
-    const pendingOrders = await Order.find({
+    const pendingOrders = await orderQueries.getOrdersByQuery({
       status: 'PENDING',
       created_at: { $lte: windowTime },
     });

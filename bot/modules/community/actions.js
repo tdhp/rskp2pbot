@@ -32,7 +32,7 @@ const getVolumeNDays = async (days, communityId) => {
       $group: {
         _id: null,
         amount: { $sum: '$amount' },
-        routing_fee: { $sum: '$routing_fee' },
+        gas_fee: { $sum: '$payment_fee' },
         fee: { $sum: '$fee' },
       },
     },

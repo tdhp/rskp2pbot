@@ -64,7 +64,6 @@ const sell = async ctx => {
         community.currencies
       );
 
-    // @ts-ignore
     const order = await ordersActions.createOrder(ctx.i18n, ctx, user, {
       type: 'sell',
       amount,
@@ -167,10 +166,8 @@ const isMaxPending = async user => {
     creator_id: user._id,
   });
   // We don't let users create too PENDING many orders
-  if (pendingOrders >= parseInt(process.env.MAX_PENDING_ORDERS)) {
-    return true;
-  }
-  return false;
+  return pendingOrders >= parseInt(process.env.MAX_PENDING_ORDERS);
+
 };
 
 module.exports = { buyWizard, sellWizard, buy, sell, isMaxPending };

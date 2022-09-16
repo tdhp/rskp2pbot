@@ -1,14 +1,14 @@
 const { Scenes } = require('telegraf');
 const logger = require('../../../logger');
 const { Community, User, PendingPayment } = require('../../../models');
-const { isPendingPayment } = require('../../../ln');
 const { isGroupAdmin, itemsFromMessage } = require('../../../util');
 const messages = require('../../messages');
-const { isValidInvoice } = require('../../validations');
+const { toValidLowerCaseAddress } = require('../../validations');
 const {
   createCommunityWizardStatus,
   wizardCommunityWrongPermission,
 } = require('./messages');
+const { findTransaction } = require('../../../rsk/wallet')
 
 exports.communityWizard = new Scenes.WizardScene(
   'COMMUNITY_WIZARD_SCENE_ID',
@@ -221,7 +221,7 @@ const createCommunitySteps = {
       }
       const { bot, user } = ctx.wizard.state;
       const chan = itemsFromMessage(text);
-      ctx.wizard.state.channels = text;
+      ctx.wizard.state.channels = chan;
       if (chan.length > 2) {
         await ctx.telegram.deleteMessage(
           ctx.message.chat.id,
@@ -356,7 +356,7 @@ const createCommunitySteps = {
       if (usernames.length > 0 && usernames.length < 10) {
         for (let i = 0; i < usernames.length; i++) {
           const username =
-            usernames[i][0] == '@' ? usernames[i].slice(1) : usernames[i];
+            usernames[i][0] === '@' ? usernames[i].slice(1) : usernames[i];
           const user = await User.findOne({ username });
           if (user) {
             solvers.push({
@@ -398,9 +398,6 @@ const createCommunitySteps = {
         return ctx.telegram.deleteMessage(prompt.chat.id, prompt.message_id);
       }
       const { bot, user } = ctx.wizard.state;
-      if (text < 0 || text > 100) {
-        return await ctx.reply(ctx.i18n.t('wizard_community_wrong_percent'));
-      }
       if (!(await isGroupAdmin(text, user, bot.telegram))) {
         await ctx.telegram.deleteMessage(
           ctx.message.chat.id,
@@ -677,7 +674,7 @@ exports.updateSolversCommunityWizard = new Scenes.WizardScene(
       if (usernames.length > 0 && usernames.length < 10) {
         for (let i = 0; i < usernames.length; i++) {
           const username =
-            usernames[i][0] == '@' ? usernames[i].slice(1) : usernames[i];
+            usernames[i][0] === '@' ? usernames[i].slice(1) : usernames[i];
           const user = await User.findOne({ username });
           if (user) {
             solvers.push({
@@ -813,7 +810,7 @@ exports.addEarningsInvoiceWizard = new Scenes.WizardScene(
       if (community.earnings === 0) return ctx.scene.leave();
 
       await ctx.reply(
-        ctx.i18n.t('send_me_lninvoice', { amount: community.earnings })
+        ctx.i18n.t('send_me_payout_address', { amount: community.earnings })
       );
 
       return ctx.wizard.next();
@@ -824,35 +821,30 @@ exports.addEarningsInvoiceWizard = new Scenes.WizardScene(
   async ctx => {
     try {
       if (ctx.message === undefined) return ctx.scene.leave();
-      const lnInvoice = ctx.message.text.trim();
+      const communityAccountAddress = ctx.message.text.trim();
       const { community } = ctx.wizard.state;
 
-      const res = await isValidInvoice(ctx, lnInvoice);
+      const res = await toValidLowerCaseAddress(ctx, communityAccountAddress);
       if (!res.success) return;
-
-      if (!!res.invoice.tokens && res.invoice.tokens !== community.earnings)
-        return await ctx.reply(ctx.i18n.t('invoice_with_incorrect_amount'));
 
       const isScheduled = await PendingPayment.findOne({
         community_id: community._id,
         attempts: { $lt: process.env.PAYMENT_ATTEMPTS },
         paid: false,
       });
-      // We check if the payment is on flight
-      const isPending = await isPendingPayment(lnInvoice);
 
-      if (!!isScheduled || !!isPending)
+      if (!!isScheduled)
         return await ctx.reply(ctx.i18n.t('invoice_already_being_paid'));
 
       const user = await User.findById(community.creator_id);
       logger.debug(`Creating pending payment for community ${community.id}`);
       const pp = new PendingPayment({
         amount: community.earnings,
-        payment_request: lnInvoice,
+        asset: community.asset ?? 'sats',
+        payment_address: res.allLowerCaseAddress,
         user_id: user.id,
         community_id: community._id,
         description: `Retiro por admin @${user.username}`,
-        hash: res.invoice.hash,
       });
       await pp.save();
       await ctx.reply(ctx.i18n.t('invoice_updated_and_will_be_paid'));

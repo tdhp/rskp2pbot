@@ -3,7 +3,6 @@ const { I18n } = require('@grammyjs/i18n');
 const { limit } = require('@grammyjs/ratelimiter');
 const schedule = require('node-schedule');
 const {
-  Order,
   User,
   PendingPayment,
   Community,
@@ -16,7 +15,6 @@ const {
   userMiddleware,
   adminMiddleware,
 } = require('./middleware');
-const ordersActions = require('./ordersActions');
 const CommunityModule = require('./modules/community');
 const LanguageModule = require('./modules/language');
 const OrdersModule = require('./modules/orders');
@@ -36,16 +34,14 @@ const {
   release,
 } = require('./commands');
 const {
-  settleHoldInvoice,
-  cancelHoldInvoice,
-  payToBuyer,
-  isPendingPayment,
-} = require('../ln');
+  revertTransaction,
+  payToBuyer, releaseEscrowAccount,
+} = require('../rsk');
 const {
   validateUser,
   validateParams,
   validateObjectId,
-  validateInvoice,
+  toValidLowerCaseAddress,
   validateLightningAddress,
 } = require('./validations');
 const messages = require('./messages');
@@ -57,11 +53,14 @@ const {
   attemptCommunitiesPendingPayments,
 } = require('../jobs');
 const logger = require('../logger');
+const { findTransaction } = require('../rsk/wallet')
+const ordersActions = require('./ordersActions')
+const orderQueries = require('./orderQueries')
 
 const askForConfirmation = async (user, command) => {
   try {
     const where = {};
-    if (command == '/cancel') {
+    if (command === '/cancel') {
       where.$and = [
         { $or: [{ buyer_id: user._id }, { seller_id: user._id }] },
         {
@@ -73,15 +72,11 @@ const askForConfirmation = async (user, command) => {
           ],
         },
       ];
-      const orders = await Order.find(where);
-
-      return orders;
-    } else if (command == '/fiatsent') {
+      return await orderQueries.getOrdersByQuery(where);
+    } else if (command === '/fiatsent') {
       where.$and = [{ buyer_id: user._id }, { status: 'ACTIVE' }];
-      const orders = await Order.find(where);
-
-      return orders;
-    } else if (command == '/release') {
+      return await orderQueries.getOrdersByQuery(where);
+    } else if (command === '/release') {
       where.$and = [
         { seller_id: user._id },
         {
@@ -92,9 +87,7 @@ const askForConfirmation = async (user, command) => {
           ],
         },
       ];
-      const orders = await Order.find(where);
-
-      return orders;
+      return await orderQueries.getOrdersByQuery(where);
     }
 
     return [];
@@ -205,7 +198,7 @@ const initialize = (botToken, options) => {
 
       if (!orderId) return;
       if (!(await validateObjectId(ctx, orderId))) return;
-      const order = await Order.findOne({ _id: orderId });
+      const order = await orderQueries.getOrderById(orderId);
 
       if (!order) return;
 
@@ -238,7 +231,15 @@ const initialize = (botToken, options) => {
         }
       }
 
-      if (order.hash) await cancelHoldInvoice({ hash: order.hash });
+      if (order.status === 'ACTIVE') {
+        let escrowAccount = order.escrow_account
+        await revertTransaction({
+          escrowAccountAddress: escrowAccount.address,
+          depositedAmount: escrowAccount.previous_deposit_actual_amount,
+          depositBlockNumber: escrowAccount.previous_deposit_block_number,
+        })
+        await releaseEscrowAccount(escrowAccount.address)
+      }
 
       if (dispute) {
         dispute.status = 'SELLER_REFUNDED';
@@ -314,7 +315,7 @@ const initialize = (botToken, options) => {
       if (!orderId) return;
       if (!(await validateObjectId(ctx, orderId))) return;
 
-      const order = await Order.findOne({ _id: orderId });
+      const order = await orderQueries.getOrderById(orderId);
       if (!order) return;
 
       // We look for a dispute for this order
@@ -336,8 +337,6 @@ const initialize = (botToken, options) => {
           return await messages.notAuthorized(ctx);
         }
       }
-
-      if (order.secret) await settleHoldInvoice({ secret: order.secret });
 
       if (dispute) {
         dispute.status = 'SETTLED';
@@ -370,7 +369,7 @@ const initialize = (botToken, options) => {
 
       if (!orderId) return;
       if (!(await validateObjectId(ctx, orderId))) return;
-      const order = await Order.findOne({ _id: orderId });
+      const order = await orderQueries.getOrderById(orderId);
 
       if (!order) return;
 
@@ -466,7 +465,7 @@ const initialize = (botToken, options) => {
       }
 
       if (!(await validateLightningAddress(lightningAddress)))
-        return await messages.invalidLightningAddress(ctx);
+        return await messages.invalidAddress(ctx);
 
       ctx.user.lightning_address = lightningAddress;
       await ctx.user.save();
@@ -479,7 +478,7 @@ const initialize = (botToken, options) => {
   // Only buyers can use this command
   bot.command('setinvoice', userMiddleware, async ctx => {
     try {
-      const [orderId, lnInvoice] = await validateParams(
+      const [orderId, buyerAddress] = await validateParams(
         ctx,
         3,
         '\\<_order id_\\> \\<_lightning invoice_\\>'
@@ -487,9 +486,9 @@ const initialize = (botToken, options) => {
 
       if (!orderId) return;
       if (!(await validateObjectId(ctx, orderId))) return;
-      const invoice = await validateInvoice(ctx, lnInvoice);
-      if (!invoice) return;
-      const order = await Order.findOne({
+      const result = await toValidLowerCaseAddress(ctx, buyerAddress);
+      if (!result || !result.success) return;
+      const order = await orderQueries.getOrderByQuery({
         _id: orderId,
         buyer_id: ctx.user.id,
       });
@@ -498,10 +497,7 @@ const initialize = (botToken, options) => {
       if (order.status === 'SUCCESS')
         return await messages.successCompleteOrderMessage(ctx, order);
 
-      if (invoice.tokens && invoice.tokens !== order.amount)
-        return await messages.incorrectAmountInvoiceMessage(ctx);
-
-      order.buyer_invoice = lnInvoice;
+      order.buyer_address = result.allLowerCaseAddress;
       // When a seller release funds but the buyer didn't get the invoice paid
       if (order.status === 'PAID_HOLD_INVOICE') {
         const isScheduled = await PendingPayment.findOne({
@@ -509,20 +505,18 @@ const initialize = (botToken, options) => {
           attempts: { $lt: process.env.PAYMENT_ATTEMPTS },
           is_invoice_expired: false,
         });
-        // We check if the payment is on flight
-        const isPending = await isPendingPayment(order.buyer_invoice);
 
-        if (!!isScheduled || !!isPending)
+        if (!!isScheduled)
           return await messages.invoiceAlreadyUpdatedMessage(ctx);
 
         if (!order.paid_hold_buyer_invoice_updated) {
           order.paid_hold_buyer_invoice_updated = true;
           const pp = new PendingPayment({
             amount: order.amount,
-            payment_request: lnInvoice,
+            asset: order.asset,
+            payment_address: buyerAddress,
             user_id: ctx.user.id,
             description: order.description,
-            hash: order.hash,
             order_id: order._id,
           });
           await pp.save();
@@ -530,9 +524,9 @@ const initialize = (botToken, options) => {
         } else {
           await messages.invoiceAlreadyUpdatedMessage(ctx);
         }
-      } else if (order.status === 'WAITING_BUYER_INVOICE') {
+      } else if (order.status === 'WAITING_BUYER_ADDRESS') {
         const seller = await User.findOne({ _id: order.seller_id });
-        await waitPayment(ctx, bot, ctx.user, seller, order, lnInvoice);
+        await waitPayment(ctx, bot, ctx.user, seller, order, result.toValidLowerCaseAddress);
       } else {
         await messages.invoiceUpdatedMessage(ctx);
       }
@@ -589,9 +583,7 @@ const initialize = (botToken, options) => {
       const [orderId] = await validateParams(ctx, 2, '\\<_order id_\\>');
       if (!orderId) return;
       if (!(await validateObjectId(ctx, orderId))) return;
-      const order = await Order.findOne({
-        _id: orderId,
-      });
+      const order = await orderQueries.getOrderById(orderId);
       if (!order) return await messages.notActiveOrderMessage(ctx);
 
       // We make sure the buyers invoice is not being paid

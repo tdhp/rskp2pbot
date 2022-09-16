@@ -1,10 +1,11 @@
-const { parsePaymentRequest } = require('invoices');
 const { ObjectId } = require('mongoose').Types;
 const messages = require('./messages');
-const { Order, User, Community } = require('../models');
+const { User, Community } = require('../models');
 const { isIso4217, isDisputeSolver } = require('../util');
 const { existLightningAddress } = require('../lnurl/lnurl-pay');
 const logger = require('../logger');
+const { ethers } = require('../rsk/connect')
+const orderQueries = require('./orderQueries')
 
 // We look in database if the telegram user exists,
 // if not, it creates a new user
@@ -243,89 +244,16 @@ const validateLightningAddress = async lightningAddress => {
   );
 };
 
-const validateInvoice = async (ctx, lnInvoice) => {
+const toValidLowerCaseAddress = async (ctx, address) => {
   try {
-    const invoice = parsePaymentRequest({ request: lnInvoice });
-    const latestDate = new Date(
-      Date.now() + parseInt(process.env.INVOICE_EXPIRATION_WINDOW)
-    ).toISOString();
-    if (!!invoice.tokens && invoice.tokens < process.env.MIN_PAYMENT_AMT) {
-      await messages.minimunAmountInvoiceMessage(ctx);
-      return false;
-    }
 
-    if (new Date(invoice.expires_at) < latestDate) {
-      await messages.minimunExpirationTimeInvoiceMessage(ctx);
-      return false;
-    }
-
-    if (invoice.is_expired !== false) {
-      await messages.expiredInvoiceMessage(ctx);
-      return false;
-    }
-
-    if (!invoice.destination) {
-      await messages.requiredAddressInvoiceMessage(ctx);
-      return false;
-    }
-
-    if (!invoice.id) {
-      await messages.requiredHashInvoiceMessage(ctx);
-      return false;
-    }
-
-    return invoice;
-  } catch (error) {
-    logger.error(error);
-    logger.debug(lnInvoice);
-    return false;
-  }
-};
-
-const isValidInvoice = async (ctx, lnInvoice) => {
-  try {
-    const invoice = parsePaymentRequest({ request: lnInvoice });
-    const latestDate = new Date(
-      Date.now() + parseInt(process.env.INVOICE_EXPIRATION_WINDOW)
-    ).toISOString();
-    if (!!invoice.tokens && invoice.tokens < process.env.MIN_PAYMENT_AMT) {
-      await messages.invoiceMustBeLargerMessage(ctx);
-      return {
-        success: false,
-      };
-    }
-
-    if (new Date(invoice.expires_at) < latestDate) {
-      await messages.invoiceExpiryTooShortMessage(ctx);
-      return {
-        success: false,
-      };
-    }
-
-    if (invoice.is_expired !== false) {
-      await messages.invoiceHasExpiredMessage(ctx);
-      return {
-        success: false,
-      };
-    }
-
-    if (!invoice.destination) {
-      await messages.invoiceHasWrongDestinationMessage(ctx);
-      return {
-        success: false,
-      };
-    }
-
-    if (!invoice.id) {
-      await messages.requiredHashInvoiceMessage(ctx);
-      return {
-        success: false,
-      };
-    }
+    const allLowerCaseAddress = address.toLowerCase()
+    const checkSumAddress = ethers.utils.getAddress(allLowerCaseAddress)
+    const result = ethers.utils.isAddress(checkSumAddress);
 
     return {
-      success: true,
-      invoice,
+      success: result,
+      allLowerCaseAddress,
     };
   } catch (error) {
     await messages.invoiceInvalidMessage(ctx);
@@ -337,7 +265,7 @@ const isValidInvoice = async (ctx, lnInvoice) => {
 
 const isOrderCreator = (user, order) => {
   try {
-    return user._id == order.creator_id;
+    return user._id === order.creator_id;
   } catch (error) {
     logger.error(error);
     return false;
@@ -402,10 +330,10 @@ const validateReleaseOrder = async (ctx, user, orderId) => {
   try {
     let where = {
       seller_id: user._id,
-      status: 'WAITING_BUYER_INVOICE',
+      status: 'WAITING_BUYER_ADDRESS',
       _id: orderId,
     };
-    let order = await Order.findOne(where);
+    let order = await orderQueries.getOrderByQuery(where);
     if (order) {
       await messages.waitingForBuyerOrderMessage(ctx);
       return false;
@@ -427,7 +355,7 @@ const validateReleaseOrder = async (ctx, user, orderId) => {
     if (orderId) {
       where._id = orderId;
     }
-    order = await Order.findOne(where);
+    order = await orderQueries.getOrderByQuery(where);
 
     if (!order) {
       await messages.notActiveOrderMessage(ctx);
@@ -451,7 +379,7 @@ const validateDisputeOrder = async (ctx, user, orderId) => {
       ],
     };
 
-    const order = await Order.findOne(where);
+    const order = await orderQueries.getOrderByQuery(where);
 
     if (!order) {
       await messages.notActiveOrderMessage(ctx);
@@ -477,7 +405,7 @@ const validateFiatSentOrder = async (ctx, user, orderId) => {
     if (orderId) {
       where._id = orderId;
     }
-    const order = await Order.findOne(where);
+    const order = await orderQueries.getOrderByQuery(where);
     if (!order) {
       await messages.notActiveOrderMessage(ctx);
       return false;
@@ -488,8 +416,8 @@ const validateFiatSentOrder = async (ctx, user, orderId) => {
       return false;
     }
 
-    if (!order.buyer_invoice) {
-      await messages.notLightningInvoiceMessage(ctx, order);
+    if (!order.buyer_address) {
+      await messages.noBuyerAddressMessage(ctx, order);
       return false;
     }
 
@@ -508,7 +436,7 @@ const validateSeller = async (ctx, user) => {
       status: 'FIAT_SENT',
     };
 
-    const order = await Order.findOne(where);
+    const order = await orderQueries.getOrderByQuery(where);
 
     if (order) {
       await messages.orderOnfiatSentStatusMessages(ctx, user);
@@ -561,9 +489,9 @@ const validateUserWaitingOrder = async (ctx, bot, user) => {
     // If is a seller
     let where = {
       seller_id: user._id,
-      status: 'WAITING_PAYMENT',
+      status: 'WAITING_DEPOSIT',
     };
-    let orders = await Order.find(where);
+    let orders = await orderQueries.getOrdersByQuery(where);
     if (orders.length > 0) {
       await messages.userCantTakeMoreThanOneWaitingOrderMessage(ctx, bot, user);
       return false;
@@ -571,9 +499,9 @@ const validateUserWaitingOrder = async (ctx, bot, user) => {
     // If is a buyer
     where = {
       buyer_id: user._id,
-      status: 'WAITING_BUYER_INVOICE',
+      status: 'WAITING_BUYER_ADDRESS',
     };
-    orders = await Order.find(where);
+    orders = await orderQueries.getOrdersByQuery(where);
     if (orders.length > 0) {
       await messages.userCantTakeMoreThanOneWaitingOrderMessage(ctx, bot, user);
       return false;
@@ -591,7 +519,7 @@ const isBannedFromCommunity = async (user, communityId) => {
     if (!communityId) return false;
     const community = await Community.findOne({ _id: communityId });
     if (!community) return false;
-    return community.banned_users.some(buser => buser.id == user._id);
+    return community.banned_users.some(buser => buser.id === user._id);
   } catch (error) {
     logger.error(error);
     return false;
@@ -603,7 +531,7 @@ module.exports = {
   validateBuyOrder,
   validateUser,
   validateAdmin,
-  validateInvoice,
+  toValidLowerCaseAddress,
   validateTakeSellOrder,
   validateTakeBuyOrder,
   validateReleaseOrder,
@@ -613,7 +541,6 @@ module.exports = {
   validateParams,
   validateObjectId,
   validateLightningAddress,
-  isValidInvoice,
   validateUserWaitingOrder,
   isBannedFromCommunity,
 };

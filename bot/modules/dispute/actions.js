@@ -1,7 +1,8 @@
-const { User, Order, Dispute } = require('../../../models');
+const { User, Dispute } = require('../../../models');
 const messages = require('./messages');
 const { validateAdmin } = require('../../validations');
 const globalMessages = require('../../messages');
+const orderQueries = require('../../orderQueries')
 
 exports.takeDispute = async ctx => {
   const tgId = ctx.update.callback_query.from.id;
@@ -9,7 +10,7 @@ exports.takeDispute = async ctx => {
   if (!admin) return;
   const orderId = ctx.match[1];
   // We check if this is a solver, the order must be from the same community
-  const order = await Order.findOne({ _id: orderId });
+  const order = await orderQueries.getOrderById(orderId);
   const dispute = await Dispute.findOne({ order_id: orderId });
   if (!admin.admin) {
     if (!order.community_id) return await globalMessages.notAuthorized(ctx);

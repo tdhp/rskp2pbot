@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
+const { Schema } = require('mongoose')
 
 const OrderSchema = new mongoose.Schema({
   description: { type: String },
+  asset: { type: String },
   amount: {
-    // amount in satoshis
+    // amount in satoshis, 1 sats = 10,000,000,000 weis
     type: Number,
     min: 0,
   },
@@ -20,25 +22,15 @@ const OrderSchema = new mongoose.Schema({
   fee: { type: Number, min: 0 },
   bot_fee: { type: Number, min: 0 }, // bot MAX_FEE at the moment of order creation
   community_fee: { type: Number, min: 0 }, // community FEE_PERCENT at the moment of order creation
-  routing_fee: { type: Number, min: 0, default: 0 },
-  hash: {
-    type: String,
-    index: {
-      unique: true,
-      partialFilterExpression: { hash: { $type: 'string' } },
-    },
-  }, // hold invoice hash
-  secret: {
-    type: String,
-    index: {
-      unique: true,
-      partialFilterExpression: { secret: { $type: 'string' } },
-    },
-  }, // hold invoice secret
+  gas_fee: { type: Number, min: 0, default: 0 },
+  escrow_account: {
+    type: Schema.Types.ObjectId,
+    ref: 'EscrowAccount',
+  },
   creator_id: { type: String },
   seller_id: { type: String },
   buyer_id: { type: String },
-  buyer_invoice: { type: String },
+  buyer_address: { type: String },
   buyer_dispute: { type: Boolean, default: false },
   seller_dispute: { type: Boolean, default: false },
   buyer_cooperativecancel: { type: Boolean, default: false },
@@ -47,11 +39,12 @@ const OrderSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: [
-      'WAITING_PAYMENT', // buyer waiting for seller pay hold invoice
-      'WAITING_BUYER_INVOICE', // seller waiting for buyer add invoice where will receive sats
+      'WAITING_DEPOSIT', // buyer waiting for seller pay hold invoice
+      'WAITING_BUYER_ADDRESS', // seller waiting for buyer add invoice where will receive sats
       'PENDING', // order published on CHANNEL but not taken yet
       'ACTIVE', //  order taken
       'FIAT_SENT', // buyer indicates the fiat payment is already done
+      'RELEASED', //seller released the deposit in escrow
       'CLOSED', // order closed
       'DISPUTE', // one of the parties started a dispute
       'CANCELED',
@@ -63,7 +56,7 @@ const OrderSchema = new mongoose.Schema({
     ],
   },
   type: { type: String },
-  fiat_amount: { type: Number, min: 1 }, // amount in fiat
+  fiat_amount: { type: Number, min: 0.1 }, // amount in fiat
   fiat_code: { type: String },
   payment_method: { type: String },
   created_at: { type: Date, default: Date.now },

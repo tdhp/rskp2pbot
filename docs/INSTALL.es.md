@@ -187,8 +187,7 @@ DB_HOST='localhost'
 DB_PORT='27017'
 DB_NAME='p2plnbot'
 
-INVOICE_EXPIRATION_WINDOW=60000
-HOLD_INVOICE_EXPIRATION_WINDOW=60
+WINDOW_TO_DEPOSIT_DEPOSIT_FUNDS_IN_ESCROW_ACCOUNT=60
 CHANNEL='@tunuevocanal' # Canal creado por ti, el bot debe ser admin aquí
 ADMIN_CHANNEL='-10*****46' # Canal o grupo donde el bot envía info a admins, el bot debe ser admin
 

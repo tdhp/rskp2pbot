@@ -1,26 +1,25 @@
-const { cancelHoldInvoice } = require('../ln');
-const { User, Order } = require('../models');
+const { User } = require('../models');
 const { cancelShowHoldInvoice, cancelAddInvoice } = require('../bot/commands');
 const messages = require('../bot/messages');
 const { getUserI18nContext } = require('../util');
 const logger = require('../logger');
+const orderQueries = require('../bot/orderQueries')
 
 const cancelOrders = async bot => {
   try {
     const holdInvoiceTime = new Date();
     holdInvoiceTime.setSeconds(
       holdInvoiceTime.getSeconds() -
-        parseInt(process.env.HOLD_INVOICE_EXPIRATION_WINDOW)
+        parseInt(process.env.WINDOW_TO_DEPOSIT_DEPOSIT_FUNDS_IN_ESCROW_ACCOUNT)
     );
     // We get the orders where the seller didn't pay the hold invoice before expired
     // or where the buyer didn't add the invoice
-    const waitingPaymentOrders = await Order.find({
-      $or: [{ status: 'WAITING_PAYMENT' }, { status: 'WAITING_BUYER_INVOICE' }],
+    const waitingPaymentOrders = await orderQueries.getOrdersByQuery({
+      $or: [{ status: 'WAITING_DEPOSIT' }, { status: 'WAITING_BUYER_ADDRESS' }],
       taken_at: { $lte: holdInvoiceTime },
     });
     for (const order of waitingPaymentOrders) {
-      await cancelHoldInvoice({ hash: order.hash });
-      if (order.status === 'WAITING_PAYMENT') {
+      if (order.status === 'WAITING_DEPOSIT') {
         await cancelShowHoldInvoice(null, bot, order);
       } else {
         await cancelAddInvoice(null, bot, order);
@@ -34,7 +33,7 @@ const cancelOrders = async bot => {
     orderTime.setSeconds(
       orderTime.getSeconds() - parseInt(process.env.ORDER_EXPIRATION_WINDOW)
     );
-    const activeOrders = await Order.find({
+    const activeOrders = await orderQueries.getOrdersByQuery({
       invoice_held_at: { $lte: orderTime },
       $or: [
         {

@@ -9,12 +9,11 @@ const {
   validateReleaseOrder,
 } = require('./validations');
 const {
-  createHoldInvoice,
-  subscribeInvoice,
-  cancelHoldInvoice,
-  settleHoldInvoice,
-} = require('../ln');
-const { Order, User, Dispute } = require('../models');
+  useEscrowAccount,
+  monitorOrderEscrowAccount,
+  revertTransaction, releaseEscrowAccount,
+} = require('../rsk');
+const { User, Dispute } = require('../models');
 const messages = require('./messages');
 const {
   getBtcFiatPrice,
@@ -23,39 +22,61 @@ const {
   getUserI18nContext,
   getFee,
   getEmojiRate,
-  decimalRound,
+  decimalRound, getRIFFiatPrice,
 } = require('../util');
 const ordersActions = require('./ordersActions');
 
 const { resolvLightningAddress } = require('../lnurl/lnurl-pay');
 const logger = require('../logger');
+const orderQueries = require('./orderQueries')
+const { toRskCheckSumAddress } = require('../rsk/utils')
 
 const takebuy = async (ctx, bot) => {
   try {
     const text = ctx.update.callback_query.message.text;
-    if (!text) return;
+    if (!text) {
+      logger.notice('take buy text invalid');
+      return;
+    }
 
     const { user } = ctx;
 
-    if (!(await validateUserWaitingOrder(ctx, bot, user))) return;
+    if (!(await validateUserWaitingOrder(ctx, bot, user))) {
+      logger.notice('take buy user validation failed');
+      return;
+    }
 
     // Sellers with orders in status = FIAT_SENT, have to solve the order
     const isOnFiatSentStatus = await validateSeller(ctx, user);
 
-    if (!isOnFiatSentStatus) return;
+    if (!isOnFiatSentStatus) {
+      logger.notice('take buy is not on fiat sent status');
+      return;
+    }
     const orderId = extractId(text);
-    if (!orderId) return;
-    if (!(await validateObjectId(ctx, orderId))) return;
-    const order = await Order.findOne({ _id: orderId });
-    if (!order) return;
+    if (!orderId) {
+      logger.notice('take buy invalid order id');
+      return;
+    }
+    if (!(await validateObjectId(ctx, orderId))) {
+      logger.notice('take buy invalid object id');
+      return;
+    }
+    const order = await orderQueries.getOrderById(orderId);
+    if (!order) {
+      logger.notice('take buy order not found');
+      return;
+    }
     // We verify if the user is not banned on this community
-    if (await isBannedFromCommunity(user, order.community_id))
+    if (await isBannedFromCommunity(user, order.community_id)) {
+      logger.notice('take buy user banned');
       return await messages.bannedUserErrorMessage(ctx, user);
+    }
 
     if (!(await validateTakeBuyOrder(ctx, bot, user, order))) return;
     // We change the status to trigger the expiration of this order
     // if the user don't do anything
-    order.status = 'WAITING_PAYMENT';
+    order.status = 'WAITING_DEPOSIT';
     order.seller_id = user._id;
     order.taken_at = Date.now();
     await order.save();
@@ -69,21 +90,39 @@ const takebuy = async (ctx, bot) => {
 
 const takesell = async (ctx, bot) => {
   try {
+
     const text = ctx.update.callback_query.message.text;
-    if (!text) return;
+    if (!text) {
+      logger.notice('take sell invalid text');
+      return;
+    }
 
     const { user } = ctx;
 
-    if (!(await validateUserWaitingOrder(ctx, bot, user))) return;
+    if (!(await validateUserWaitingOrder(ctx, bot, user))) {
+      logger.notice('take sell user is not valid');
+      return;
+    }
     const orderId = extractId(text);
-    if (!orderId) return;
-    const order = await Order.findOne({ _id: orderId });
-    if (!order) return;
+    if (!orderId) {
+      logger.notice('take sell no order id');
+      return;
+    }
+    const order = await orderQueries.getOrderById(orderId);
+    if (!order) {
+      logger.notice('take sell invalid order id');
+      return;
+    }
     // We verify if the user is not banned on this community
-    if (await isBannedFromCommunity(user, order.community_id))
+    if (await isBannedFromCommunity(user, order.community_id)) {
+      logger.notice('take sell user banned');
       return await messages.bannedUserErrorMessage(ctx, user);
-    if (!(await validateTakeSellOrder(ctx, bot, user, order))) return;
-    order.status = 'WAITING_BUYER_INVOICE';
+    }
+    if (!(await validateTakeSellOrder(ctx, bot, user, order))) {
+      logger.notice('take sell invalid take sell order');
+      return;
+    }
+    order.status = 'WAITING_BUYER_ADDRESS';
     order.buyer_id = user._id;
     order.taken_at = Date.now();
 
@@ -96,7 +135,7 @@ const takesell = async (ctx, bot) => {
   }
 };
 
-const waitPayment = async (ctx, bot, buyer, seller, order, buyerInvoice) => {
+const waitPayment = async (ctx, bot, buyer, seller, order, buyerAddress) => {
   try {
     // If there is not fiat amount the function don't do anything
     if (order.fiat_amount === undefined) {
@@ -106,12 +145,13 @@ const waitPayment = async (ctx, bot, buyer, seller, order, buyerInvoice) => {
       return;
     }
 
-    order.buyer_invoice = buyerInvoice;
+    order.buyer_address = buyerAddress;
     // We need the i18n context to send the message with the correct language
     const i18nCtx = await getUserI18nContext(seller);
     // If the buyer is the creator, at this moment the seller already paid the hold invoice
     if (order.creator_id === order.buyer_id) {
       order.status = 'ACTIVE';
+      await order.save();
       // Message to buyer
       await messages.addInvoiceMessage(ctx, bot, buyer, seller, order);
       // Message to seller
@@ -123,32 +163,30 @@ const waitPayment = async (ctx, bot, buyer, seller, order, buyerInvoice) => {
         i18nCtx
       );
     } else {
-      // We create a hold invoice
-      const description = i18nCtx.t('hold_invoice_memo', {
-        botName: ctx.botInfo.username,
-        orderId: order._id,
-        fiatCode: order.fiat_code,
-        fiatAmount: order.fiat_amount,
-      });
-      const amount = Math.floor(order.amount + order.fee);
-      const { request, hash, secret } = await createHoldInvoice({
-        amount,
-        description,
-      });
-      order.hash = hash;
-      order.secret = secret;
+      const escrowAccount = await useEscrowAccount(order.asset)
+      order.escrow_account = escrowAccount._id;
       order.taken_at = Date.now();
-      order.status = 'WAITING_PAYMENT';
+      order.status = 'WAITING_DEPOSIT';
+      await order.save();
       // We monitor the invoice to know when the seller makes the payment
-      await subscribeInvoice(bot, hash);
+      await monitorOrderEscrowAccount(bot, order);
 
       // We need the buyer rate
       const buyer = await User.findById(order.buyer_id);
       const stars = getEmojiRate(buyer.total_rating);
       const roundedRating = decimalRound(buyer.total_rating, -1);
       const rate = `${roundedRating} ${stars} (${buyer.total_reviews})`;
+      const amount = Math.floor(order.amount + order.fee);
+      logger.debug(`Expected Amount: ${amount}, Order: ${order.amount} + Total Fees (bot + community): ${order.fee}`)
+      const description = i18nCtx.t('deposit_funds_in_escrow_memo', {
+        botName: ctx.botInfo.username,
+        orderId: order._id,
+        fiatCode: order.fiat_code,
+        fiatAmount: order.fiat_amount,
+      });
+      const request = { address: toRskCheckSumAddress(escrowAccount.address), amount, description }
       // We send the hold invoice to the seller
-      await messages.invoicePaymentRequestMessage(
+      await messages.fundDepositRequestMessage(
         ctx,
         seller,
         request,
@@ -158,7 +196,6 @@ const waitPayment = async (ctx, bot, buyer, seller, order, buyerInvoice) => {
       );
       await messages.takeSellWaitingSellerToPayMessage(ctx, bot, buyer, order);
     }
-    await order.save();
   } catch (error) {
     logger.error(`Error in waitPayment: ${error}`);
   }
@@ -171,12 +208,12 @@ const addInvoice = async (ctx, bot, order) => {
     if (!order) {
       const orderId = ctx.update.callback_query.message.text;
       if (!orderId) return;
-      order = await Order.findOne({ _id: orderId });
+      order = await orderQueries.getOrderById(orderId);
       if (!order) return;
     }
 
-    // Buyers only can take orders with status WAITING_BUYER_INVOICE
-    if (order.status !== 'WAITING_BUYER_INVOICE') {
+    // Buyers only can take orders with status WAITING_BUYER_ADDRESS
+    if (order.status !== 'WAITING_BUYER_ADDRESS') {
       return;
     }
 
@@ -193,7 +230,11 @@ const addInvoice = async (ctx, bot, order) => {
 
     let amount = order.amount;
     if (amount === 0) {
-      amount = await getBtcFiatPrice(order.fiat_code, order.fiat_amount);
+      if (order.asset === 'rif') {
+        amount = await getRIFFiatPrice(order.fiat_code, order.fiat_amount);
+      } else {
+        amount = await getBtcFiatPrice(order.fiat_code, order.fiat_amount);
+      }
       const marginPercent = order.price_margin / 100;
       amount = amount - amount * marginPercent;
       amount = Math.floor(amount);
@@ -215,16 +256,16 @@ const addInvoice = async (ctx, bot, order) => {
         order.amount * 1000
       );
       if (!!laRes && !laRes.pr) {
-        logger.warn(
+        logger.notice(
           `lightning address ${buyer.lightning_address} not available`
         );
-        messages.unavailableLightningAddress(
+        messages.unavailableAddress(
           ctx,
           bot,
           buyer,
           buyer.lightning_address
         );
-        ctx.scene.enter('ADD_INVOICE_WIZARD_SCENE_ID', {
+        ctx.scene.enter('ADD_BUYER_ADDRESS_WIZARD_SCENE_ID', {
           order,
           seller,
           buyer,
@@ -234,7 +275,7 @@ const addInvoice = async (ctx, bot, order) => {
         await waitPayment(ctx, bot, buyer, seller, order, laRes.pr);
       }
     } else {
-      ctx.scene.enter('ADD_INVOICE_WIZARD_SCENE_ID', {
+      ctx.scene.enter('ADD_BUYER_ADDRESS_WIZARD_SCENE_ID', {
         order,
         seller,
         buyer,
@@ -253,7 +294,7 @@ const rateUser = async (ctx, bot, rating, orderId) => {
     const callerId = ctx.from.id;
 
     if (!orderId) return;
-    const order = await Order.findOne({ _id: orderId });
+    const order = await orderQueries.getOrderById(orderId);
 
     if (!order) return;
     const buyer = await User.findOne({ _id: order.buyer_id });
@@ -316,7 +357,7 @@ const cancelAddInvoice = async (ctx, bot, order) => {
       userAction = true;
       const orderId = !!ctx && ctx.update.callback_query.message.text;
       if (!orderId) return;
-      order = await Order.findOne({ _id: orderId });
+      order = await orderQueries.getOrderById(orderId);
       if (!order) return;
     }
 
@@ -325,8 +366,8 @@ const cancelAddInvoice = async (ctx, bot, order) => {
     if (!user) return;
 
     const i18nCtx = await getUserI18nContext(user);
-    // Buyers only can cancel orders with status WAITING_BUYER_INVOICE
-    if (order.status !== 'WAITING_BUYER_INVOICE')
+    // Buyers only can cancel orders with status WAITING_BUYER_ADDRESS
+    if (order.status !== 'WAITING_BUYER_ADDRESS')
       return await messages.genericErrorMessage(bot, user, i18nCtx);
 
     const sellerUser = await User.findOne({ _id: order.seller_id });
@@ -360,8 +401,6 @@ const cancelAddInvoice = async (ctx, bot, order) => {
       if (order.price_from_api) {
         order.amount = 0;
         order.fee = 0;
-        order.hash = null;
-        order.secret = null;
       }
 
       if (order.type === 'buy') {
@@ -395,15 +434,15 @@ const showHoldInvoice = async (ctx, bot, order) => {
     if (!order) {
       const orderId = ctx.update.callback_query.message.text;
       if (!orderId) return;
-      order = await Order.findOne({ _id: orderId });
+      order = await orderQueries.getOrderById(orderId);
       if (!order) return;
     }
 
     const user = await User.findOne({ _id: order.seller_id });
     if (!user) return;
 
-    // Sellers only can take orders with status WAITING_PAYMENT
-    if (order.status !== 'WAITING_PAYMENT') {
+    // Sellers only can take orders with status WAITING_DEPOSIT
+    if (order.status !== 'WAITING_DEPOSIT') {
       await messages.invalidDataMessage(ctx, bot, user);
       return;
     }
@@ -417,16 +456,13 @@ const showHoldInvoice = async (ctx, bot, order) => {
       return;
     }
 
-    // We create the hold invoice and show it to the seller
-    const description = ctx.i18n.t('hold_invoice_memo', {
-      botName: ctx.botInfo.username,
-      orderId: order._id,
-      fiatCode: order.fiat_code,
-      fiatAmount: order.fiat_amount,
-    });
     let amount;
     if (order.amount === 0) {
-      amount = await getBtcFiatPrice(order.fiat_code, order.fiat_amount);
+      if (order.asset === 'rif') {
+        amount = await getRIFFiatPrice(order.fiat_code, order.fiat_amount);
+      } else {
+        amount = await getBtcFiatPrice(order.fiat_code, order.fiat_amount);
+      }
       const marginPercent = order.price_margin / 100;
       amount = amount - amount * marginPercent;
       amount = Math.floor(amount);
@@ -434,16 +470,19 @@ const showHoldInvoice = async (ctx, bot, order) => {
       order.amount = amount;
     }
     amount = Math.floor(order.amount + order.fee);
-    const { request, hash, secret } = await createHoldInvoice({
-      description,
-      amount,
-    });
-    order.hash = hash;
-    order.secret = secret;
+    const escrowAccount = await useEscrowAccount(order.asset);
+    order.escrow_account = escrowAccount._id;
     await order.save();
 
     // We monitor the invoice to know when the seller makes the payment
-    await subscribeInvoice(bot, hash);
+    await monitorOrderEscrowAccount(bot, order);
+    const description = ctx.i18n.t('deposit_funds_in_escrow_memo', {
+      botName: ctx.botInfo.username,
+      orderId: order._id,
+      fiatCode: order.fiat_code,
+      fiatAmount: order.fiat_amount,
+    });
+    const request = { address: escrowAccount.address, amount, description };
     await messages.showHoldInvoiceMessage(
       ctx,
       request,
@@ -464,15 +503,15 @@ const cancelShowHoldInvoice = async (ctx, bot, order) => {
       userAction = true;
       const orderId = !!ctx && ctx.update.callback_query.message.text;
       if (!orderId) return;
-      order = await Order.findOne({ _id: orderId });
+      order = await orderQueries.getOrderById(orderId);
       if (!order) return;
     }
 
     const user = await User.findOne({ _id: order.seller_id });
     if (!user) return;
     const i18nCtx = await getUserI18nContext(user);
-    // Sellers only can cancel orders with status WAITING_PAYMENT
-    if (order.status !== 'WAITING_PAYMENT')
+    // Sellers only can cancel orders with status WAITING_DEPOSIT
+    if (order.status !== 'WAITING_DEPOSIT')
       return await messages.genericErrorMessage(bot, user, i18nCtx);
 
     const buyerUser = await User.findOne({ _id: order.buyer_id });
@@ -507,8 +546,7 @@ const cancelShowHoldInvoice = async (ctx, bot, order) => {
       if (order.price_from_api) {
         order.amount = 0;
         order.fee = 0;
-        order.hash = null;
-        order.secret = null;
+        order.escrow_account.address = null;
       }
 
       if (order.type === 'buy') {
@@ -551,7 +589,7 @@ const cancelShowHoldInvoice = async (ctx, bot, order) => {
 const addInvoicePHI = async (ctx, bot, orderId) => {
   try {
     ctx.deleteMessage();
-    const order = await Order.findOne({ _id: orderId });
+    const order = await orderQueries.getOrderById(orderId);
     // orders with status PAID_HOLD_INVOICE are released payments
     if (order.status !== 'PAID_HOLD_INVOICE') {
       return;
@@ -587,10 +625,7 @@ const cancelOrder = async (ctx, orderId, user) => {
     if (!order) return;
 
     if (order.status === 'PENDING') {
-      // If we already have a holdInvoice we cancel it and return the money
-      if (order.hash) {
-        await cancelHoldInvoice({ hash: order.hash });
-      }
+
 
       order.status = 'CANCELED';
       order.canceled_by = user._id;
@@ -603,13 +638,13 @@ const cancelOrder = async (ctx, orderId, user) => {
 
     // If a buyer is taking a sell offer and accidentally touch continue button we
     // let the user to cancel
-    if (order.type === 'sell' && order.status === 'WAITING_BUYER_INVOICE') {
+    if (order.type === 'sell' && order.status === 'WAITING_BUYER_ADDRESS') {
       return await cancelAddInvoice(null, ctx, order);
     }
 
     // If a seller is taking a buy offer and accidentally touch continue button we
     // let the user to cancel
-    if (order.type === 'buy' && order.status === 'WAITING_PAYMENT') {
+    if (order.type === 'buy' && order.status === 'WAITING_DEPOSIT') {
       return await cancelShowHoldInvoice(null, ctx, order);
     }
 
@@ -619,14 +654,15 @@ const cancelOrder = async (ctx, orderId, user) => {
         order.status === 'FIAT_SENT' ||
         order.status === 'DISPUTE'
       )
-    )
+    ) {
       return await messages.badStatusOnCancelOrderMessage(ctx);
+    }
 
     // If the order is active we start a cooperative cancellation
     let counterPartyUser, initiator, counterParty;
 
     const initiatorUser = user;
-    if (initiatorUser._id == order.buyer_id) {
+    if (initiatorUser._id === order.buyer_id) {
       counterPartyUser = await User.findOne({ _id: order.seller_id });
       initiator = 'buyer';
       counterParty = 'seller';
@@ -647,13 +683,18 @@ const cancelOrder = async (ctx, orderId, user) => {
     const i18nCtxCP = await getUserI18nContext(counterPartyUser);
     // If the counter party already requested a cooperative cancel order
     if (order[`${counterParty}_cooperativecancel`]) {
-      // If we already have a holdInvoice we cancel it and return the money
-      if (order.hash) await cancelHoldInvoice({ hash: order.hash });
+      if (order.status === 'ACTIVE') {
+        logger.info(`Cooperative cancel revertTransaction ${order.status}`)
+        await revertTransaction({
+          escrowAccountAddress: order.escrow_account.address
+        });
+        await releaseEscrowAccount(order.escrow_account.address)
+      }
 
       order.status = 'CANCELED';
       let seller = initiatorUser;
       let i18nCtxSeller = ctx.i18n;
-      if (order.seller_id == counterPartyUser._id) {
+      if (order.seller_id === counterPartyUser._id) {
         seller = counterPartyUser;
         i18nCtxSeller = i18nCtxCP;
       }
@@ -736,15 +777,16 @@ const release = async (ctx, orderId, user) => {
     if (user.banned) return await messages.bannedUserErrorMessage(ctx, user);
     const order = await validateReleaseOrder(ctx, user, orderId);
     if (!order) return;
+
+    order.status = 'RELEASED';
     // We look for a dispute for this order
     const dispute = await Dispute.findOne({ order_id: order._id });
 
     if (dispute) {
       dispute.status = 'RELEASED';
-      await dispute.save();
+      await dispute.save()
     }
-
-    await settleHoldInvoice({ secret: order.secret });
+    await order.save();
   } catch (error) {
     logger.error(error);
   }

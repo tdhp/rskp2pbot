@@ -43,7 +43,7 @@ const nonHandleErrorMessage = async ctx => {
   }
 };
 
-const invoicePaymentRequestMessage = async (
+const fundDepositRequestMessage = async (
   ctx,
   user,
   request,
@@ -58,22 +58,23 @@ const invoicePaymentRequestMessage = async (
         ? currency.symbol_native
         : order.fiat_code;
     const expirationTime =
-      parseInt(process.env.HOLD_INVOICE_EXPIRATION_WINDOW) / 60;
-    const message = i18n.t('invoice_payment_request', {
+      parseInt(process.env.WINDOW_TO_DEPOSIT_DEPOSIT_FUNDS_IN_ESCROW_ACCOUNT) / 60;
+    const message = i18n.t('fund_deposit_request', {
       currency,
       order,
+      amount: request.amount,
       expirationTime,
       rate,
     });
     await ctx.telegram.sendMessage(user.tg_id, message);
     // Create QR code
-    const qrBytes = await QR.toBuffer(request);
+    const qrBytes = await QR.toBuffer(request.address);
     // Send payment request in QR and text
     await ctx.telegram.sendMediaGroup(user.tg_id, [
       {
         type: 'photo',
         media: { source: qrBytes },
-        caption: ['`', request, '`'].join(''),
+        caption: ['`', request.address, '`'].join(''),
         parse_mode: 'MarkdownV2',
       },
     ]);
@@ -156,16 +157,6 @@ const minimunAmountInvoiceMessage = async ctx => {
   }
 };
 
-const minimunExpirationTimeInvoiceMessage = async ctx => {
-  try {
-    const expirationTime =
-      parseInt(process.env.INVOICE_EXPIRATION_WINDOW) / 60 / 1000;
-    await ctx.reply(ctx.i18n.t('min_expiration_time', { expirationTime }));
-  } catch (error) {
-    logger.error(error);
-  }
-};
-
 const expiredInvoiceMessage = async ctx => {
   try {
     await ctx.reply(ctx.i18n.t('invoice_expired'));
@@ -231,14 +222,6 @@ const invoiceHasWrongDestinationMessage = async ctx => {
   }
 };
 
-const requiredHashInvoiceMessage = async ctx => {
-  try {
-    await ctx.reply(ctx.i18n.t('invoice_require_hash'));
-  } catch (error) {
-    logger.error(error);
-  }
-};
-
 const invoiceInvalidMessage = async ctx => {
   try {
     await ctx.reply(ctx.i18n.t('invoice_invalid_error'));
@@ -296,7 +279,7 @@ const genericErrorMessage = async (bot, user, i18n) => {
 const beginTakeBuyMessage = async (ctx, bot, seller, order) => {
   try {
     const expirationTime =
-      parseInt(process.env.HOLD_INVOICE_EXPIRATION_WINDOW) / 60;
+      parseInt(process.env.WINDOW_TO_DEPOSIT_DEPOSIT_FUNDS_IN_ESCROW_ACCOUNT) / 60;
     await bot.telegram.sendMessage(
       seller.tg_id,
       ctx.i18n.t('begin_take_buy', { expirationTime })
@@ -338,18 +321,19 @@ const showHoldInvoiceMessage = async (
     await ctx.reply(
       ctx.i18n.t('pay_invoice', {
         amount: numberFormat(fiatCode, amount),
+        amountAndFees: numberFormat(fiatCode, request.amount),
         fiatAmount: numberFormat(fiatCode, fiatAmount),
         currency,
       })
     );
     // Create QR code
-    const qrBytes = await QR.toBuffer(request);
+    const qrBytes = await QR.toBuffer(request.address);
     // Send payment request in QR and text
     await ctx.replyWithMediaGroup([
       {
         type: 'photo',
         media: { source: qrBytes },
-        caption: ['`', request, '`'].join(''),
+        caption: ['`', request.address, '`'].join(''),
         parse_mode: 'MarkdownV2',
       },
     ]);
@@ -563,7 +547,7 @@ const publishBuyOrderMessage = async (
     const message1 = await bot.telegram.sendMessage(channel, publishMessage, {
       reply_markup: {
         inline_keyboard: [
-          [{ text: i18n.t('sell_sats'), callback_data: 'takebuy' }],
+          [{ text: i18n.t('sell_label'), callback_data: 'takebuy' }],
         ],
       },
     });
@@ -596,7 +580,7 @@ const publishSellOrderMessage = async (
     const message1 = await ctx.telegram.sendMessage(channel, publishMessage, {
       reply_markup: {
         inline_keyboard: [
-          [{ text: i18n.t('buy_sats'), callback_data: 'takesell' }],
+          [{ text: i18n.t('buy_label'), callback_data: 'takesell' }],
         ],
       },
     });
@@ -647,19 +631,19 @@ const mustBeANumberOrRange = async ctx => {
   }
 };
 
-const invalidLightningAddress = async ctx => {
+const invalidAddress = async ctx => {
   try {
-    await ctx.reply(ctx.i18n.t('invalid_lightning_address'));
+    await ctx.reply(ctx.i18n.t('invalid_address'));
   } catch (error) {
     logger.error(error);
   }
 };
 
-const unavailableLightningAddress = async (ctx, bot, user, la) => {
+const unavailableAddress = async (ctx, bot, user, la) => {
   try {
     await bot.telegram.sendMessage(
       user.tg_id,
-      ctx.i18n.t('unavailable_lightning_address', { la })
+      ctx.i18n.t('unavailable_address', { la })
     );
   } catch (error) {
     logger.error(error);
@@ -830,9 +814,9 @@ const cantTakeOwnOrderMessage = async (ctx, bot, user) => {
   }
 };
 
-const notLightningInvoiceMessage = async (ctx, order) => {
+const noBuyerAddressMessage = async (ctx, order) => {
   try {
-    await ctx.reply(ctx.i18n.t('send_me_lninvoice', { amount: order.amount }));
+    await ctx.reply(ctx.i18n.t('send_me_payout_address', { amount: order.amount }));
     await ctx.reply(
       ctx.i18n.t('setinvoice_cmd_order', { orderId: order._id }),
       { parse_mode: 'MarkdownV2' }
@@ -863,9 +847,15 @@ const notRateForCurrency = async (bot, user, i18n) => {
   }
 };
 
-const incorrectAmountInvoiceMessage = async ctx => {
+const incorrectAmountDepositedMessage = async (bot, user, depositedAmount, sellerAddress, i18n) => {
   try {
-    await ctx.reply(ctx.i18n.t('invoice_with_incorrect_amount'));
+    await bot.telegram.sendMessage(
+      user.tg_id,
+      i18n.t('incorrect_amount_deposited_in_escrow', {
+        depositedAmount,
+        sellerAddress,
+      })
+    );
   } catch (error) {
     logger.error(error);
   }
@@ -1206,7 +1196,7 @@ const cantAddInvoiceMessage = async ctx => {
 
 const sendMeAnInvoiceMessage = async (ctx, amount, i18nCtx) => {
   try {
-    await ctx.reply(i18nCtx.t('send_me_lninvoice', { amount }));
+    await ctx.reply(i18nCtx.t('send_me_payout_address', { amount }));
   } catch (error) {
     logger.error(error);
   }
@@ -1381,7 +1371,7 @@ const toAdminChannelPendingPaymentSuccessMessage = async (
   user,
   order,
   pending,
-  payment,
+  receipt,
   i18n
 ) => {
   try {
@@ -1392,7 +1382,7 @@ const toAdminChannelPendingPaymentSuccessMessage = async (
         username: user.username,
         attempts: pending.attempts,
         amount: numberFormat(order.fiat_code, order.amount),
-        paymentSecret: payment.secret,
+        paymentSecret: receipt.to,
       })
     );
   } catch (error) {
@@ -1404,7 +1394,7 @@ const toBuyerPendingPaymentSuccessMessage = async (
   bot,
   user,
   order,
-  payment,
+  receipt,
   i18n
 ) => {
   try {
@@ -1413,7 +1403,7 @@ const toBuyerPendingPaymentSuccessMessage = async (
       i18n.t('pending_payment_success', {
         id: order._id,
         amount: numberFormat(order.fiat_code, order.amount),
-        paymentSecret: payment.secret,
+        paymentSecret: receipt.to,
       })
     );
   } catch (error) {
@@ -1533,11 +1523,10 @@ const showConfirmationButtons = async (ctx, orders, commandString) => {
 module.exports = {
   startMessage,
   initBotErrorMessage,
-  invoicePaymentRequestMessage,
+  fundDepositRequestMessage,
   sellOrderCorrectFormatMessage,
   buyOrderCorrectFormatMessage,
   minimunAmountInvoiceMessage,
-  minimunExpirationTimeInvoiceMessage,
   expiredInvoiceMessage,
   requiredAddressInvoiceMessage,
   invoiceMustBeLargerMessage,
@@ -1545,7 +1534,6 @@ module.exports = {
   invoiceHasExpiredMessage,
   invoiceHasWrongDestinationMessage,
   invoiceInvalidMessage,
-  requiredHashInvoiceMessage,
   publishBuyOrderMessage,
   invalidOrderMessage,
   invalidTypeOrderMessage,
@@ -1564,8 +1552,8 @@ module.exports = {
   checkOrderMessage,
   mustBeValidCurrency,
   mustBeANumberOrRange,
-  unavailableLightningAddress,
-  invalidLightningAddress,
+  unavailableAddress,
+  invalidAddress,
   helpMessage,
   mustBeGreatherEqThan,
   bannedUserErrorMessage,
@@ -1578,10 +1566,10 @@ module.exports = {
   notValidIdMessage,
   addInvoiceMessage,
   cantTakeOwnOrderMessage,
-  notLightningInvoiceMessage,
+  noBuyerAddressMessage,
   notOrdersMessage,
   notRateForCurrency,
-  incorrectAmountInvoiceMessage,
+  incorrectAmountDepositedMessage,
   beginTakeSellMessage,
   invoiceUpdatedMessage,
   counterPartyWantsCooperativeCancelMessage,

@@ -24,6 +24,7 @@ const createOrder = (exports.createOrder = new Scenes.WizardScene(
         community,
         statusMessage,
         type,
+        asset,
         currency,
         fiatAmount,
         sats,
@@ -57,6 +58,7 @@ const createOrder = (exports.createOrder = new Scenes.WizardScene(
           }
         };
       }
+      if (undefined === asset) return createOrderSteps.asset(ctx);
       if (undefined === currency) return createOrderSteps.currency(ctx);
       if (undefined === fiatAmount) return createOrderSteps.fiatAmount(ctx);
       if (undefined === sats) return createOrderSteps.sats(ctx);
@@ -66,6 +68,7 @@ const createOrder = (exports.createOrder = new Scenes.WizardScene(
 
       const order = await ordersActions.createOrder(ctx.i18n, ctx, user, {
         type,
+        asset,
         amount: sats,
         fiatAmount,
         fiatCode: currency,
@@ -102,6 +105,22 @@ const createOrder = (exports.createOrder = new Scenes.WizardScene(
 ));
 
 const createOrderSteps = {
+  async asset(ctx) {
+    const prompt = await createOrderPrompts.asset(ctx);
+    const deletePrompt = () =>
+      ctx.telegram.deleteMessage(prompt.chat.id, prompt.message_id);
+    ctx.wizard.state.handler = async ctx => {
+      ctx.wizard.state.error = null;
+      if (!ctx.callbackQuery) {
+        logger.debug(`returning from createOrderSteps asset`)
+        return
+      }
+      ctx.wizard.state.asset = ctx.callbackQuery.data;
+      await ctx.wizard.state.updateUI();
+      return deletePrompt();
+    };
+    return ctx.wizard.next();
+  },
   async currency(ctx) {
     const prompt = await createOrderPrompts.currency(ctx);
     const deletePrompt = () =>
@@ -120,8 +139,7 @@ const createOrderSteps = {
         await ctx.wizard.state.updateUI();
       } else {
         if (!ctx.callbackQuery) return;
-        const currency = ctx.callbackQuery.data;
-        ctx.wizard.state.currency = currency;
+        ctx.wizard.state.currency = ctx.callbackQuery.data;
         await ctx.wizard.state.updateUI();
       }
       return deletePrompt();
@@ -197,6 +215,22 @@ const createOrderSteps = {
 };
 
 const createOrderPrompts = {
+  async asset(ctx) {
+    const buttons = [
+      Markup.button.callback('RIF', 'rif'),
+      Markup.button.callback('Sats (RSK)', 'sats'),
+    ];
+    const rows = [];
+    const chunkSize = 2;
+    for (let i = 0; i < buttons.length; i += chunkSize) {
+      const chunk = buttons.slice(i, i + chunkSize);
+      rows.push(chunk);
+    }
+    return ctx.reply(
+      ctx.i18n.t('select_asset'),
+      Markup.inlineKeyboard(rows)
+    );
+  },
   async priceMargin(ctx) {
     const margin = ['-5', '-4', '-3', '-2', '-1', '+1', '+2', '+3', '+4', '+5'];
     const buttons = margin.map(m => Markup.button.callback(m + '%', m));
@@ -245,8 +279,14 @@ const createOrderPrompts = {
       ctx.i18n.t('market_price'),
       'marketPrice'
     );
+    let message = ''
+    if (ctx.wizard.state.asset === 'sats') {
+      message = ctx.i18n.t('enter_sats_amount')
+    } else {
+      message = ctx.i18n.t('enter_rif_amount')
+    }
     return ctx.reply(
-      ctx.i18n.t('enter_sats_amount'),
+      message,
       Markup.inlineKeyboard([button])
     );
   },

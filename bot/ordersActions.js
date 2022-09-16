@@ -17,6 +17,7 @@ const createOrder = async (
   user,
   {
     type,
+    asset,
     amount,
     fiatAmount,
     fiatCode,
@@ -48,6 +49,7 @@ const createOrder = async (
 
     const baseOrderData = {
       ...fiatAmountData,
+      asset,
       amount,
       fee,
       bot_fee: botFee,
@@ -64,6 +66,7 @@ const createOrder = async (
       description: buildDescription(i18n, {
         user,
         type,
+        asset,
         amount,
         fiatAmount,
         fiatCode,
@@ -114,6 +117,7 @@ const buildDescription = (
   {
     user,
     type,
+    asset,
     amount,
     fiatAmount,
     fiatCode,
@@ -155,8 +159,12 @@ const buildDescription = (
     let tasaText = '';
     if (priceFromAPI) {
       amountText = '';
+      let rateProvider = process.env.FIAT_RATE_NAME;
+      if (asset === 'rif') {
+        rateProvider = process.env.RIF_FIAT_RATE_NAME;
+      }
       tasaText =
-        i18n.t('rate') + `: ${process.env.FIAT_RATE_NAME} ${priceMarginText}\n`;
+        i18n.t('rate') + `: ${rateProvider} ${priceMarginText}\n`;
     } else {
       const exchangePrice = getBtcExchangePrice(fiatAmount[0], amount);
       tasaText =
@@ -171,8 +179,13 @@ const buildDescription = (
       rateText = `${roundedRating} ${stars} (${totalReviews})\n`;
     }
 
+    let assetUnit = i18n.t('sats')
+    if(asset === 'rif') {
+      assetUnit = i18n.t('rif')
+    }
+
     let description =
-      `${username}${action} ${amountText}` + i18n.t('sats') + `\n`;
+      `${username}${action} ${amountText}` + assetUnit + `\n`;
     description += i18n.t('for') + ` ${currencyString}\n`;
     description += `${paymentAction} ` + i18n.t('by') + ` ${paymentMethod}\n`;
     description += i18n.t('has_successful_trades', { trades }) + `\n`;
@@ -199,7 +212,7 @@ const getOrder = async (ctx, user, orderId) => {
       $or: [{ seller_id: user._id }, { buyer_id: user._id }],
     };
 
-    const order = await Order.findOne(where);
+    const order = await Order.findOne(where).populate('escrow_account');
     if (!order) {
       await messages.notOrderMessage(ctx);
       return false;
@@ -226,8 +239,8 @@ const getOrders = async (ctx, user, status) => {
       where.$and.push({ status });
     } else {
       const $or = [
-        { status: 'WAITING_PAYMENT' },
-        { status: 'WAITING_BUYER_INVOICE' },
+        { status: 'WAITING_DEPOSIT' },
+        { status: 'WAITING_BUYER_ADDRESS' },
         { status: 'PENDING' },
         { status: 'ACTIVE' },
         { status: 'FIAT_SENT' },
@@ -236,7 +249,7 @@ const getOrders = async (ctx, user, status) => {
       ];
       where.$and.push({ $or });
     }
-    const orders = await Order.find(where);
+    const orders = await Order.find(where).populate('escrow_account');
 
     if (orders.length === 0) {
       await messages.notOrdersMessage(ctx);
@@ -258,7 +271,7 @@ const getNewRangeOrderPayload = async order => {
     }
 
     if (newMaxAmount >= order.min_amount) {
-      const orderData = {
+      return {
         type: order.type,
         amount: 0,
         // drop newMaxAmount if it is equal to min_amount and create a
@@ -275,8 +288,6 @@ const getNewRangeOrderPayload = async order => {
         tgOrderMessage: order.tg_order_message,
         community_id: order.community_id,
       };
-
-      return orderData;
     }
   } catch (error) {
     logger.error(error);

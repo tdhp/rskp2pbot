@@ -3,14 +3,14 @@ const { Scenes } = require('telegraf');
 const CommunityModule = require('../modules/community');
 const OrdersModule = require('../modules/orders');
 const {
-  addInvoiceWizard,
+  addBuyerAddressWizard,
   addFiatAmountWizard,
   addInvoicePHIWizard,
 } = require('../scenes');
 
 exports.stageMiddleware = () => {
   const scenes = [
-    addInvoiceWizard,
+    addBuyerAddressWizard,
     addFiatAmountWizard,
     CommunityModule.Scenes.communityWizard,
     CommunityModule.Scenes.updateNameCommunityWizard,
